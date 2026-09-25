@@ -1,0 +1,36 @@
+# Machine-specific Android SDK path -- never portable, never committed.
+local.properties
+
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Android Studio / IntelliJ project state
+.idea/
+*.iml
+.navigation/
+captures/
+
+# Native build intermediates (NDK/CMake), unused today but harmless to pre-ignore
+.cxx/
+.externalNativeBuild/
+
+# Build/output artifacts -- the real ones live in app/build/outputs, never hand-placed here
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Signing material -- must never be committed
+*.jks
+*.keystore
+
+# Crash/heap dumps
+*.hprof
+
+# OS/editor cruft
+.DS_Store
+*.swp
+*.swo
+*~
