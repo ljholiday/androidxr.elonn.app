@@ -1,5 +1,6 @@
 package com.elonn.androidxr.core
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -8,8 +9,26 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+private const val TAG = "ElonnWorldClient"
+
 class WorldAuthRequiredException : Exception()
 class WorldUnavailableException(message: String) : Exception(message)
+
+/**
+ * A single POST /world/call request. Mirrors xreal.elonn.app's
+ * WorldCallRequest -- operation + free-text input, plus the optional pieces
+ * World's Call envelope carries: an action's operation_invocation to dispatch,
+ * the opened/selected Object a call is scoped to (originObject), and the
+ * currently-selected Object id, which World reads as "open this Finding"
+ * (context.focus.object_id).
+ */
+data class WorldCallRequest(
+    val operation: String,
+    val inputText: String = "",
+    val operationInvocation: JSONObject? = null,
+    val originObject: String? = null,
+    val selectedObjectId: String? = null,
+)
 
 /**
  * Talks to exactly one endpoint: POST /world/call. World has no other routes.
@@ -20,15 +39,18 @@ class WorldUnavailableException(message: String) : Exception(message)
  */
 class WorldClient(private val http: OkHttpClient = OkHttpClient()) {
 
-    suspend fun call(token: String, operation: String, datasetId: String?): JSONObject {
+    suspend fun call(token: String, datasetId: String?, request: WorldCallRequest): JSONObject {
         val envelope = JSONObject().apply {
             put("id", "call:runtime:${RuntimeConfig.RUNTIME_ID}:${System.currentTimeMillis()}")
             put("content", JSONObject().apply {
-                put("operation", operation)
+                put("operation", request.operation)
                 put("input", JSONObject().apply {
                     put("type", "text")
-                    put("text", "")
+                    put("text", request.inputText)
                 })
+                if (request.operationInvocation != null) {
+                    put("operation_invocation", request.operationInvocation)
+                }
             })
             put("context", JSONObject().apply {
                 put("runtime", JSONObject().apply {
@@ -49,13 +71,21 @@ class WorldClient(private val http: OkHttpClient = OkHttpClient()) {
                 put("scope", "default")
                 put("runtime_state", JSONObject().apply {
                     put("dataset_id", datasetId ?: JSONObject.NULL)
+                    if (!request.originObject.isNullOrBlank()) {
+                        put("origin_object", request.originObject)
+                    }
                 })
-                put("focus", JSONObject())
+                put("focus", JSONObject().apply {
+                    if (!request.selectedObjectId.isNullOrBlank()) {
+                        put("object_id", request.selectedObjectId)
+                    }
+                })
             })
         }
 
+        Log.d(TAG, "-> ${request.operation} (origin=${request.originObject}, selected=${request.selectedObjectId})")
         val body = envelope.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
+        val httpRequest = Request.Builder()
             .url("${RuntimeConfig.WORLD_BASE_URL}/world/call")
             .header("Accept", "application/json")
             .header("Authorization", "Bearer $token")
@@ -64,13 +94,19 @@ class WorldClient(private val http: OkHttpClient = OkHttpClient()) {
             .build()
 
         return withContext(Dispatchers.IO) {
-            http.newCall(request).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (response.code == 401) throw WorldAuthRequiredException()
-                if (!response.isSuccessful) {
-                    throw WorldUnavailableException("World request failed: ${response.code} $text")
+            try {
+                http.newCall(httpRequest).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    Log.d(TAG, "<- ${response.code} for ${request.operation} (${text.length} bytes)")
+                    if (response.code == 401) throw WorldAuthRequiredException()
+                    if (!response.isSuccessful) {
+                        throw WorldUnavailableException("World request failed: ${response.code} $text")
+                    }
+                    if (text.isBlank()) JSONObject() else JSONObject(text)
                 }
-                if (text.isBlank()) JSONObject() else JSONObject(text)
+            } catch (e: Exception) {
+                Log.e(TAG, "call failed for ${request.operation}", e)
+                throw e
             }
         }
     }

@@ -69,4 +69,18 @@ dependencies {
     // used for the JSON envelopes since it ships in the Android platform already.
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+
+    // Encrypted on-device token storage -- xreal.elonn.app persists its session
+    // token via Unity PlayerPrefs (plaintext); Android's standard equivalent for
+    // a real bearer credential is EncryptedSharedPreferences, not a plaintext file.
+    implementation("androidx.security:security-crypto:1.1.0")
+
+    // Field is a camera-passthrough AR view with GPS/compass-placed markers
+    // (xreal.elonn.app's ArFieldRenderer.cs + Geo.cs), not a list -- CameraX
+    // gives the live camera preview; location/heading come from platform
+    // LocationManager/SensorManager, no extra dependency needed for those.
+    implementation("androidx.camera:camera-core:1.5.0")
+    implementation("androidx.camera:camera-camera2:1.5.0")
+    implementation("androidx.camera:camera-lifecycle:1.5.0")
+    implementation("androidx.camera:camera-view:1.5.0")
 }

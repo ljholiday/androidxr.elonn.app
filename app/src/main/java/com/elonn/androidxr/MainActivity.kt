@@ -1,52 +1,104 @@
 package com.elonn.androidxr
 
+import android.Manifest
 import android.os.Bundle
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
+import com.elonn.androidxr.core.Geo
+import com.elonn.androidxr.core.PanelStore
+import com.elonn.androidxr.core.RuntimeAction
+import com.elonn.androidxr.core.RuntimeInterpreter
+import com.elonn.androidxr.core.RuntimeState
+import com.elonn.androidxr.core.TokenStore
+import com.elonn.androidxr.core.WorldAuthRequiredException
+import com.elonn.androidxr.core.WorldCallRequest
 import com.elonn.androidxr.core.WorldClient
+import com.elonn.androidxr.core.WorldObject
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
- * First real milestone of the native Android XR runtime spike (see
- * decision.native_android_xr_candidate_runtime_20260924 on agents.elonn.com):
- * a genuine login against api.elonn's real auth-form Dataset, followed by a
- * real world.restore call against production World. No mock data anywhere.
- *
- * The login form is rendered generically from the action's argument schema --
- * the same "Conductor attaches the real argument schema, the runtime renders
- * a real form from it" pattern every other Runtime already follows, not a
- * hand-written email/password screen.
+ * The native Android XR runtime spike (decision.native_android_xr_candidate_runtime_20260924,
+ * next_step.native_android_field_spike_20260924 on agents.elonn.com). A Runtime
+ * owns presentation only -- it never decides what exists, only shows what
+ * World's Dataset says exists (CLAUDE.md's Runtime definition; xreal.elonn.app's
+ * RuntimeInterpreter is the reference this mirrors). Nothing here is Field-loop-
+ * specific UI logic invented for this app: the login form renders generically
+ * from an action's argument schema, and the Field screen renders generically
+ * from Objects/Actions/Placements/Findings, same as every other Runtime.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Without this, Android reserves the status/navigation bars as solid
+        // opaque chrome outside the app's own drawable area -- the "white
+        // area on the bottom of the screen" caught live on-device. Field's
+        // camera background is meant to be full-bleed; FieldView insets the
+        // interactive layer (Entry, Carry windows) itself so they still land
+        // in the safe-drawing area, not under the status/navigation bars.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // setDecorFitsSystemWindows alone stops reserving layout space for
+        // the bars but leaves their own background opaque -- this device's
+        // 3-button nav bar was still a solid light strip after the first
+        // fix, caught live on-device. Transparent backgrounds let the camera
+        // feed show through them instead of sitting behind a painted bar.
+        @Suppress("DEPRECATION")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -60,27 +112,20 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Loading : Screen
     data class Login(val action: JSONObject, val error: String? = null) : Screen
-    data class Field(val dataset: JSONObject) : Screen
+    data class Field(val state: RuntimeState) : Screen
     data class Failed(val message: String) : Screen
 }
 
 @Composable
 private fun ElonnApp() {
+    val context = LocalContext.current
     val auth = remember { AuthClient() }
     val world = remember { WorldClient() }
-    val scope = rememberCoroutineScopeSafe()
+    val tokenStore = remember { TokenStore(context) }
+    val scope = rememberCoroutineScope()
 
     var screen by remember { mutableStateOf<Screen>(Screen.Loading) }
     var token by remember { mutableStateOf<String?>(null) }
-
-    suspend fun restoreField(currentToken: String) {
-        try {
-            val dataset = world.call(currentToken, "world.restore", null)
-            screen = Screen.Field(dataset)
-        } catch (e: Exception) {
-            screen = Screen.Failed(e.message ?: "World request failed.")
-        }
-    }
 
     suspend fun loadLoginForm() {
         try {
@@ -92,11 +137,60 @@ private fun ElonnApp() {
         }
     }
 
-    LaunchedEffect(Unit) { loadLoginForm() }
+    suspend fun performCall(currentToken: String, datasetId: String?, request: WorldCallRequest) {
+        try {
+            val dataset = world.call(currentToken, datasetId, request)
+            val state = RuntimeInterpreter.apply(dataset)
+            android.util.Log.d("ElonnField", "carry=${state.carry.objectIds} focus=${state.selectedObjectId}")
+            screen = Screen.Field(state)
+        } catch (e: WorldAuthRequiredException) {
+            tokenStore.clear()
+            token = null
+            loadLoginForm()
+        } catch (e: Exception) {
+            screen = Screen.Failed(e.message ?: "World request failed.")
+        }
+    }
+
+    suspend fun restoreField(currentToken: String) {
+        performCall(currentToken, datasetId = null, WorldCallRequest(operation = "world.restore"))
+    }
+
+    LaunchedEffect(Unit) {
+        val stored = tokenStore.load()
+        if (stored != null) {
+            token = stored
+            restoreField(stored)
+        } else {
+            loadLoginForm()
+        }
+    }
+
+    suspend fun logout() {
+        val previousToken = token
+        tokenStore.clear()
+        token = null
+        if (!previousToken.isNullOrBlank()) {
+            try {
+                auth.logout(previousToken)
+            } catch (e: Exception) {
+                // Local logout must still complete if the API is temporarily unavailable.
+            }
+        }
+        loadLoginForm()
+    }
 
     when (val current = screen) {
         is Screen.Loading -> LoadingView()
-        is Screen.Failed -> ErrorView(current.message)
+        // xreal.elonn.app's PhoneRenderer.RenderStatus: Refresh is the retry
+        // action on this transient failure state, not permanent chrome --
+        // "a small floating card... not a screen-spanning block."
+        is Screen.Failed -> ErrorView(current.message) {
+            scope.launch {
+                val currentToken = token
+                if (currentToken != null) restoreField(currentToken) else loadLoginForm()
+            }
+        }
         is Screen.Login -> LoginView(current.action, current.error) { values ->
             scope.launch {
                 screen = Screen.Loading
@@ -106,6 +200,7 @@ private fun ElonnApp() {
                     val result = auth.submit(path, values)
                     val accessToken = result.optJSONObject("context")?.optString("access_token").orEmpty()
                     if (accessToken.isNotBlank()) {
+                        tokenStore.store(accessToken)
                         token = accessToken
                         restoreField(accessToken)
                     } else {
@@ -121,7 +216,68 @@ private fun ElonnApp() {
                 }
             }
         }
-        is Screen.Field -> FieldView(current.dataset)
+        is Screen.Field -> FieldView(
+            state = current.state,
+            onSelect = { objectId ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(
+                            operation = "world.focus",
+                            inputText = "world.focus",
+                            originObject = objectId,
+                            selectedObjectId = objectId,
+                        ),
+                    )
+                }
+            },
+            onDispatch = { label, operationInvocation ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(
+                            operation = "world.compose",
+                            inputText = label,
+                            operationInvocation = operationInvocation,
+                        ),
+                    )
+                }
+            },
+            onClose = { objectId ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(operation = "world.close", inputText = "world.close", originObject = objectId),
+                    )
+                }
+            },
+            onSubmitFind = { query ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(operation = "world.compose", inputText = query),
+                    )
+                }
+            },
+            onClearResults = {
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(operation = "world.clear", inputText = "world.clear"),
+                    )
+                }
+            },
+        )
     }
 }
 
@@ -155,13 +311,14 @@ private fun LoadingView() {
 }
 
 @Composable
-private fun ErrorView(message: String) {
+private fun ErrorView(message: String, onRetry: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("Elonn", style = MaterialTheme.typography.headlineMedium)
         Text(message, style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) { Text("Refresh") }
     }
 }
 
@@ -179,7 +336,7 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
     ) {
         Text("Elonn", style = MaterialTheme.typography.headlineMedium)
         Text("Native Android XR runtime spike", style = MaterialTheme.typography.bodyMedium)
-        androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 16.dp))
+        Spacer(modifier = Modifier.padding(top = 16.dp))
 
         for (key in keys) {
             val spec = arguments.getJSONObject(key)
@@ -218,36 +375,131 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
     }
 }
 
+/**
+ * A thin, faithful presentation of the World Dataset, per dev.elonn.local's
+ * layout.md and terminology/window.md. Field is a real camera passthrough
+ * background with markers placed by GPS bearing/distance plus live compass
+ * heading (Geo.kt) -- unaffected by window mechanics, since Field Placement
+ * is immutable and a marker's position is real-world geometry, not something
+ * the member drags. Everything on Carry -- including Entry, which is Carry's
+ * one non-closable window -- floats over that background as a window: move
+ * (drag the header), resize (drag the corner), collapse (tap the header, or
+ * an explicit control), close (all but Entry). No Object gets fewer
+ * controls than another; Entry's only difference is `closable = false`.
+ * Entry and the Results pane are one window, not two elements: Entry is that
+ * window's header, and collapsing it is exactly layout.md's Results pane
+ * show/hide -- "only Entry remains visible" when collapsed.
+ *
+ * layout.md: "No other permanent interface elements are presented alongside
+ * Entry." There is no app-level title bar, refresh button, or logout button
+ * here -- those aren't canonical chrome. Refresh only exists as the retry
+ * action on the Screen.Failed state (ErrorView), matching xreal.elonn.app's
+ * PhoneRenderer.RenderStatus ("a small floating card... not chrome"). Log
+ * out isn't Runtime chrome at all -- web.elonn.local's web-runtime.js: "Logout
+ * rides on every member.profile object," an ordinary Action on that Object,
+ * rendered generically like any other Action once that Object is open on
+ * Carry -- not yet reachable here since this Runtime has no Dashboard/entry
+ * point to open the member's own profile Object.
+ */
 @Composable
-private fun FieldView(dataset: JSONObject) {
-    val objects = dataset.optJSONArray("objects")
-    val rows = remember(dataset) {
-        buildList {
-            if (objects != null) {
-                for (i in 0 until objects.length()) {
-                    val obj = objects.getJSONObject(i)
-                    add(Triple(obj.optString("id"), obj.optString("type"), obj.optString("title")))
-                }
-            }
-        }
-    }
+private fun FieldView(
+    state: RuntimeState,
+    onSelect: (String) -> Unit,
+    onDispatch: (String, JSONObject) -> Unit,
+    onClose: (String) -> Unit,
+    onSubmitFind: (String) -> Unit,
+    onClearResults: () -> Unit,
+) {
+    val context = LocalContext.current
+    val panelStore = remember { PanelStore(context) }
+    // Camera background is full-bleed, behind the status/navigation bars
+    // (edge-to-edge, per MainActivity's setDecorFitsSystemWindows(false));
+    // windows measure/clamp against the safe-drawing area instead, one inset
+    // in from that, so Entry/Carry windows never default or drag under a
+    // system bar. Two different bounds, deliberately.
+    var cameraBoundsPx by remember { mutableStateOf(IntSize.Zero) }
+    var boundsPx by remember { mutableStateOf(IntSize.Zero) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text("Elonn Field", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "world.restore -- ${rows.size} object(s) from a real World Dataset",
-            style = MaterialTheme.typography.bodyMedium,
+    val carryObjects = state.carry.objectIds.mapNotNull { state.objectsById[it] }
+    // A Field Placement can name an Object directly, or a Collection
+    // (e.g. maps.field's real markers live inside collection:maps:maps.field,
+    // not as individual Placements) -- mirrors xreal.elonn.app's
+    // ArFieldRenderer.Rebuild, which expands both the same way.
+    val fieldObjects = (
+        state.field.objectIds +
+            state.field.collectionIds.flatMap { state.collectionsById[it]?.itemIds.orEmpty() }
+        ).distinct().mapNotNull { state.objectsById[it] }
+    val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        FieldCameraBackground(
+            fieldObjects = fieldObjects,
+            selectedObjectId = state.selectedObjectId,
+            onSelect = onSelect,
+            boundsPx = cameraBoundsPx,
+            modifier = Modifier.fillMaxSize().onSizeChanged { cameraBoundsPx = it },
         )
-        androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 12.dp))
 
-        if (rows.isEmpty()) {
-            Text("No objects in this Dataset yet.", style = MaterialTheme.typography.bodyMedium)
-        } else {
-            LazyColumn {
-                items(rows) { (id, type, title) ->
-                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                        Text(title.ifBlank { id }, style = MaterialTheme.typography.titleMedium)
-                        Text(type, style = MaterialTheme.typography.bodySmall)
+        // Entry and every Carry window live in the safe-drawing area, not
+        // the true full-screen bounds above -- otherwise a window's default
+        // position, or a drag/resize clamp, could land it under the status
+        // or navigation bar where it's unreachable.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .onSizeChanged { boundsPx = it },
+        ) {
+            if (boundsPx != IntSize.Zero) {
+                EntryResultsWindow(
+                    panelStore = panelStore,
+                    boundsPx = boundsPx,
+                    findingObjects = findingObjects,
+                    state = state,
+                    onSelect = onSelect,
+                    onSubmitFind = onSubmitFind,
+                    onClearResults = onClearResults,
+                )
+
+                carryObjects.forEachIndexed { index, obj ->
+                    key(obj.id) {
+                        FloatingWindow(
+                            panelId = obj.id,
+                            store = panelStore,
+                            boundsPx = boundsPx,
+                            defaultX = 24.dp + (index * 18).dp,
+                            defaultY = 320.dp + (index * 18).dp,
+                            defaultWidth = 300.dp,
+                            defaultHeight = 220.dp,
+                            closable = true,
+                            onClosed = { onClose(obj.id) },
+                            header = { _, _ ->
+                                Text(
+                                    state.carryTitle(obj),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            },
+                            body = {
+                                // This window's own scrolling (FloatingWindow's body
+                                // doc): plain stacked content, so verticalScroll, not a
+                                // list -- e.g. the account Dashboard's stack of forms is
+                                // taller than the window's fixed height.
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .verticalScroll(rememberScrollState()),
+                                ) {
+                                    if (obj.summary.isNotBlank()) {
+                                        Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    ResourceLines(obj, state)
+                                    ActionLines(obj, state, onDispatch)
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -255,5 +507,299 @@ private fun FieldView(dataset: JSONObject) {
     }
 }
 
+/**
+ * Entry and the Results pane as one window (layout.md, terminology/window.md):
+ * Entry -- form field, submit, clear, show/hide (microphone omitted, this
+ * Runtime has no voice input yet) -- is the window's header/topbar; the
+ * Results pane (Findings) is its body. `closable = false`: this window must
+ * always exist. Submitting dispatches world.compose with the typed text as
+ * Call content (xreal.elonn.app's ElonnRuntimeApp.SubmitFind uses the same
+ * contract). Clear dispatches world.clear, which empties the Results pane in
+ * World's saved state, not just this screen. Collapsing (tap the header, or
+ * the explicit show/hide button) is local-only and never touches World --
+ * exactly layout.md's "does not hide Entry, no effect on Carry or Field."
+ */
 @Composable
-private fun rememberCoroutineScopeSafe() = androidx.compose.runtime.rememberCoroutineScope()
+private fun EntryResultsWindow(
+    panelStore: PanelStore,
+    boundsPx: IntSize,
+    findingObjects: List<WorldObject>,
+    state: RuntimeState,
+    onSelect: (String) -> Unit,
+    onSubmitFind: (String) -> Unit,
+    onClearResults: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+
+    FloatingWindow(
+        panelId = "entry",
+        store = panelStore,
+        boundsPx = boundsPx,
+        defaultX = 16.dp,
+        defaultY = 88.dp,
+        defaultWidth = 340.dp,
+        defaultHeight = 340.dp,
+        closable = false,
+        header = { collapsed, toggleCollapsed ->
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Find...") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { if (query.isNotBlank()) { onSubmitFind(query); query = "" } }) { Text("Go") }
+            if (findingObjects.isNotEmpty()) {
+                TextButton(onClick = onClearResults) { Text("Clear") }
+            }
+            TextButton(onClick = toggleCollapsed) { Text(if (collapsed) "Show" else "Hide") }
+        },
+        body = {
+            // dataset.md: World resolves one status (severity + message) per
+            // Dataset; the Runtime renders exactly that, not its own derived
+            // error text. Shown here, in Entry's own window, rather than as
+            // separate standalone chrome.
+            if (state.status.severity != "ok" && state.status.message.isNotBlank()) {
+                Text(
+                    state.status.message,
+                    color = if (state.status.severity == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            if (findingObjects.isEmpty()) {
+                Text("No results yet.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(findingObjects) { obj ->
+                        ObjectRow(obj, state, onSelect)
+                    }
+                }
+            }
+        },
+    )
+}
+
+/** Field's live camera preview plus GPS-bearing-placed markers for Field Objects that carry coordinates. */
+@Composable
+private fun FieldCameraBackground(
+    fieldObjects: List<WorldObject>,
+    selectedObjectId: String,
+    onSelect: (String) -> Unit,
+    boundsPx: IntSize,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    var permissionGranted by remember { mutableStateOf(hasCameraAndLocationPermission(context)) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        permissionGranted = hasCameraAndLocationPermission(context)
+    }
+    LaunchedEffect(Unit) {
+        if (!permissionGranted) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION))
+        }
+    }
+
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+        if (!permissionGranted) {
+            Column(modifier = Modifier.align(Alignment.Center).padding(24.dp)) {
+                Text("Field needs camera and location access to place markers around you.", style = MaterialTheme.typography.bodyMedium)
+                Button(
+                    onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION)) },
+                    modifier = Modifier.padding(top = 12.dp),
+                ) { Text("Grant access") }
+            }
+            return@Box
+        }
+
+        val location by rememberDeviceLocation()
+        val heading by rememberDeviceHeading()
+
+        CameraPreview(modifier = Modifier.fillMaxSize())
+
+        val fix = location
+        if (fix == null) {
+            Text(
+                "Waiting for a GPS fix...",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+            )
+        } else if (boundsPx != IntSize.Zero) {
+            // Typical phone back-camera horizontal FOV; Runtime-side approximation --
+            // Field markers don't need frame-accurate placement to be real GPS/compass
+            // placement rather than a list. Real measured viewport width now (was a
+            // hardcoded 1080px guess, silently wrong on any other screen width).
+            val horizontalFovDegrees = 60.0
+            val viewportWidthPx = boundsPx.width.toDouble()
+            // No pitch/tilt sensing, so there's no real vertical projection (Geo.kt's
+            // port of xreal's FieldProjectionX is X-only, same as the reference) --
+            // vertical center of the camera view is the least-wrong default for
+            // "roughly eye level," not a hardcoded y=24 that assumed a short, app-bar-
+            // offset camera strip. Pinned to the literal top of the screen once the
+            // camera went full-height -- caught live on-device ("now in the top of
+            // the screen. Weird.").
+            val markerYPx = (boundsPx.height / 2) - 40
+            for (obj in fieldObjects) {
+                val loc = obj.location ?: continue
+                val bearing = Geo.bearingDegrees(fix.latitude, fix.longitude, loc.first, loc.second)
+                val distance = Geo.distanceMeters(fix.latitude, fix.longitude, loc.first, loc.second)
+                val x = Geo.fieldProjectionX(bearing, heading, horizontalFovDegrees, viewportWidthPx) ?: continue
+                FieldMarker(
+                    obj = obj,
+                    distanceMeters = distance,
+                    selected = obj.id == selectedObjectId,
+                    xOffsetPx = x.toInt(),
+                    yOffsetPx = markerYPx,
+                    onSelect = onSelect,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FieldMarker(
+    obj: WorldObject,
+    distanceMeters: Double,
+    selected: Boolean,
+    xOffsetPx: Int,
+    yOffsetPx: Int,
+    onSelect: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .offset { IntOffset(xOffsetPx - 80, yOffsetPx) }
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                RoundedCornerShape(8.dp),
+            )
+            .clickable { onSelect(obj.id) }
+            .padding(8.dp),
+    ) {
+        Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.labelMedium)
+        Text("${distanceMeters.toInt()}m away", style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/** resource.md: a real embed loads; anything else is reference text only, never opened. */
+@Composable
+private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
+    for (resourceId in obj.resourceIds) {
+        val resource = state.resourcesById[resourceId] ?: continue
+        when {
+            resource.isEmbeddable -> AndroidView(
+                modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
+                factory = { context ->
+                    WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        loadUrl(resource.source)
+                    }
+                },
+                update = { view -> if (view.url != resource.source) view.loadUrl(resource.source) },
+            )
+            resource.isExternalReference -> Text(
+                resource.label.ifBlank { domainOf(resource.source) },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+private fun domainOf(url: String): String = try {
+    java.net.URI(url).host ?: url
+} catch (e: Exception) {
+    url
+}
+
+/** action.md: a simple action is a button; one with arguments gets a real form; a blocked one shows World's reason, not nothing. */
+@Composable
+private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (String, JSONObject) -> Unit) {
+    val actions = obj.actionIds.mapNotNull { state.actionsById[it] }
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        for (action in actions) {
+            when {
+                action.isSimpleAction -> TextButton(onClick = { onDispatch(action.label, action.operationInvocation!!) }) { Text(action.label) }
+                action.needsForm -> ActionForm(action, onDispatch)
+                !action.enabled -> Column(modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(action.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f))
+                    if (action.reason.isNotBlank()) {
+                        Text(action.reason, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The same generic argument-schema rendering LoginView uses, for an ordinary
+ * Object Action instead of identity.login -- web.elonn.local's operationForm
+ * builds the same way: base invocation minus `arguments`, filled values
+ * merged back in on submit.
+ */
+@Composable
+private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -> Unit) {
+    val invocation = action.operationInvocation ?: return
+    val arguments = invocation.optJSONObject("arguments") ?: JSONObject()
+    val keys = action.argumentKeys
+    val fieldValues = remember(action.id) { keys.associateWith { mutableStateOf("") } }
+
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(action.label, style = MaterialTheme.typography.labelLarge)
+        for (key in keys) {
+            val spec = arguments.optJSONObject(key) ?: JSONObject()
+            var value by fieldValues.getValue(key)
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                label = { Text(spec.optString("label", key)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            )
+        }
+        TextButton(onClick = {
+            val filledArguments = JSONObject()
+            for (key in keys) filledArguments.put(key, fieldValues.getValue(key).value)
+            val filledInvocation = JSONObject(invocation.toString()).apply { put("arguments", filledArguments) }
+            onDispatch(action.label, filledInvocation)
+        }) { Text("Submit") }
+    }
+}
+
+/**
+ * A Finding, per finding.md/layout.md: a compact card referencing an Object,
+ * not the Object itself. "A Finding does not duplicate the Object it
+ * references" and "Focusing a Finding opens the Object [...] on Carry" --
+ * the full Object (its Resources, its Actions, an embedded WebView) belongs
+ * to that opened-on-Carry presentation (the FloatingWindow body in
+ * FieldView), never to its Results-pane row. Rendering an Object's full
+ * Resources/Actions here was a real bug: searching "profile" surfaced the
+ * member's account Dashboard Object as a Finding, and this row rendered
+ * every one of its argument forms (Save profile, Save messaging preference,
+ * Manage CalDAV passwords, Log out) inline in the results list instead of a
+ * title/summary card the member taps to open.
+ */
+@Composable
+private fun ObjectRow(
+    obj: WorldObject,
+    state: RuntimeState,
+    onSelect: (String) -> Unit,
+) {
+    val selected = obj.id == state.selectedObjectId
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(obj.id) }
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                RoundedCornerShape(8.dp),
+            )
+            .padding(vertical = 8.dp, horizontal = 8.dp),
+    ) {
+        Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
+        Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
