@@ -5,6 +5,7 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,7 +93,7 @@ class MainActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         setContent {
-            MaterialTheme {
+            ElonnTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     ElonnApp()
                 }
@@ -544,7 +545,7 @@ private fun EntryResultsWindow(
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = { if (query.isNotBlank()) { onSubmitFind(query); query = "" } }) { Text("Go") }
+            TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
             if (findingObjects.isNotEmpty()) {
                 TextButton(onClick = onClearResults) { Text("Clear") }
             }
@@ -566,7 +567,10 @@ private fun EntryResultsWindow(
             if (findingObjects.isEmpty()) {
                 Text("No results yet.", style = MaterialTheme.typography.bodyMedium)
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(ElonnSpacing.xs),
+                ) {
                     items(findingObjects) { obj ->
                         ObjectRow(obj, state, onSelect)
                     }
@@ -592,14 +596,18 @@ private fun FieldMarker(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val selectedColor = MaterialTheme.colorScheme.primaryContainer
+    val unselectedColor = MaterialTheme.colorScheme.surface
     Column(
         modifier = modifier
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+            .background(if (selected) selectedColor else unselectedColor, RoundedCornerShape(8.dp))
+            .border(
+                ElonnBorderWidth,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 RoundedCornerShape(8.dp),
             )
             .clickable { onSelect(obj.id) }
-            .padding(8.dp),
+            .padding(ElonnSpacing.xs),
     ) {
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.labelMedium)
         Text("${distanceMeters.toInt()}m away", style = MaterialTheme.typography.labelSmall)
@@ -722,7 +730,12 @@ private fun ObjectRow(
                 if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                 RoundedCornerShape(8.dp),
             )
-            .padding(vertical = 8.dp, horizontal = 8.dp),
+            .border(
+                ElonnBorderWidth,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                RoundedCornerShape(8.dp),
+            )
+            .padding(vertical = ElonnSpacing.xs, horizontal = ElonnSpacing.sm),
     ) {
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
         Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)

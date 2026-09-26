@@ -1,6 +1,7 @@
 package com.elonn.androidxr
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -129,7 +130,8 @@ fun FloatingWindow(
                     raise()
                 }
             }
-            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(10.dp)),
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(10.dp))
+            .border(ElonnBorderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp)),
     ) {
         // The header both drags the window (like any title bar) and, on a
         // plain tap -- not a drag -- toggles collapse. requireUnconsumed on
@@ -161,7 +163,7 @@ fun FloatingWindow(
                         if (dragging) persist() else toggleCollapsed()
                     }
                 }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = ElonnSpacing.sm, vertical = ElonnSpacing.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             header(collapsed, ::toggleCollapsed)
@@ -184,7 +186,7 @@ fun FloatingWindow(
                 modifier = Modifier
                     .width(with(density) { widthPx.toDp() })
                     .height(with(density) { heightPx.toDp() })
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = ElonnSpacing.sm, vertical = ElonnSpacing.xs),
             ) {
                 body()
             }
@@ -195,8 +197,9 @@ fun FloatingWindow(
                 modifier = Modifier
                     .align(Alignment.End)
                     .size(28.dp)
-                    .padding(4.dp)
+                    .padding(ElonnSpacing.xs)
                     .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+                    .border(ElonnBorderWidth, MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(4.dp))
                     .pointerInput(panelId) {
                         detectResizeDrag(
                             onDragEnd = { persist() },
