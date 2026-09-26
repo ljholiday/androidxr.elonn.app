@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -119,6 +120,14 @@ private fun ElonnApp() {
 
     var screen by remember { mutableStateOf<Screen>(Screen.Loading) }
     var token by remember { mutableStateOf<String?>(null) }
+    // A World Call is in flight -- surfaced in Entry's header (a small spinner next to Go) so
+    // tapping Go gives some immediate sign something is happening, not just a silent wait for the
+    // next Dataset to arrive.
+    var isBusy by remember { mutableStateOf(false) }
+    // Bumped once a world.compose search Call completes (success or failure) -- EntryResultsWindow
+    // uses a change in this to force the Results pane open, so a fresh search (or its error) is
+    // never left hidden behind an already-collapsed pane.
+    var searchCompletedCount by remember { mutableStateOf(0) }
 
     suspend fun loadLoginForm() {
         try {
@@ -131,6 +140,7 @@ private fun ElonnApp() {
     }
 
     suspend fun performCall(currentToken: String, datasetId: String?, request: WorldCallRequest) {
+        isBusy = true
         try {
             val dataset = world.call(currentToken, datasetId, request)
             val state = RuntimeInterpreter.apply(dataset)
@@ -142,6 +152,8 @@ private fun ElonnApp() {
             loadLoginForm()
         } catch (e: Exception) {
             screen = Screen.Failed(e.message ?: "World request failed.")
+        } finally {
+            isBusy = false
         }
     }
 
@@ -211,6 +223,8 @@ private fun ElonnApp() {
         }
         is Screen.Field -> FieldView(
             state = current.state,
+            isBusy = isBusy,
+            searchCompletedCount = searchCompletedCount,
             onSelect = { objectId ->
                 val currentToken = token ?: return@FieldView
                 scope.launch {
@@ -258,6 +272,7 @@ private fun ElonnApp() {
                         current.state.datasetId,
                         WorldCallRequest(operation = "world.compose", inputText = query),
                     )
+                    searchCompletedCount++
                 }
             },
             onClearResults = {
@@ -397,6 +412,8 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
 @Composable
 private fun FieldView(
     state: RuntimeState,
+    isBusy: Boolean,
+    searchCompletedCount: Int,
     onSelect: (String) -> Unit,
     onDispatch: (String, JSONObject) -> Unit,
     onClose: (String) -> Unit,
@@ -453,6 +470,8 @@ private fun FieldView(
                     boundsPx = boundsPx,
                     findingObjects = findingObjects,
                     state = state,
+                    isBusy = isBusy,
+                    searchCompletedCount = searchCompletedCount,
                     onSelect = onSelect,
                     onSubmitFind = onSubmitFind,
                     onClearResults = onClearResults,
@@ -522,6 +541,8 @@ private fun EntryResultsWindow(
     boundsPx: IntSize,
     findingObjects: List<WorldObject>,
     state: RuntimeState,
+    isBusy: Boolean,
+    searchCompletedCount: Int,
     onSelect: (String) -> Unit,
     onSubmitFind: (String) -> Unit,
     onClearResults: () -> Unit,
@@ -537,6 +558,10 @@ private fun EntryResultsWindow(
         defaultWidth = 340.dp,
         defaultHeight = 340.dp,
         closable = false,
+        // A completed search should never sit hidden behind an already-collapsed pane -- expand
+        // every time a world.compose search finishes (success or failure; a failure still has a
+        // status message worth surfacing), never on some other unrelated recomposition.
+        expandOnChangeOf = if (searchCompletedCount > 0) searchCompletedCount else null,
         header = { collapsed, toggleCollapsed ->
             OutlinedTextField(
                 value = query,
@@ -545,7 +570,11 @@ private fun EntryResultsWindow(
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
+            if (isBusy) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
+            }
             if (findingObjects.isNotEmpty()) {
                 TextButton(onClick = onClearResults) { Text("Clear") }
             }

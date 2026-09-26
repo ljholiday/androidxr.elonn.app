@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +71,11 @@ fun FloatingWindow(
     defaultHeight: Dp,
     closable: Boolean,
     onClosed: (() -> Unit)? = null,
+    // A distinct value here (e.g. a counter bumped once per completed search) forces this window
+    // open even if the member had it collapsed -- so a fresh result set (or its error) is never
+    // left hidden. null means "no forced expand," the default for every window that doesn't need
+    // this (only EntryResultsWindow does).
+    expandOnChangeOf: Any? = null,
     header: @Composable RowScope.(collapsed: Boolean, toggleCollapsed: () -> Unit) -> Unit,
     // Responsible for its own vertical scrolling when its content can exceed
     // the window's height -- either Modifier.verticalScroll (plain stacked
@@ -100,6 +106,13 @@ fun FloatingWindow(
     fun toggleCollapsed() {
         collapsed = !collapsed
         persist()
+    }
+
+    LaunchedEffect(expandOnChangeOf) {
+        if (expandOnChangeOf != null && collapsed) {
+            collapsed = false
+            persist()
+        }
     }
 
     fun raise() {
