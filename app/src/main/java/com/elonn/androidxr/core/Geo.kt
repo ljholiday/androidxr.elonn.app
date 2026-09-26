@@ -13,6 +13,17 @@ import kotlin.math.sqrt
  * writes content.location = {latitude, longitude}) but no bearing -- the
  * canonical contract has no such field, so this is computed client-side from
  * the member's current GPS position.
+ *
+ * Used only once per Field object, at the moment ArFieldRenderer.placeAnchor
+ * creates its real ARCore Anchor (see ArCorePassthrough.kt): bearing and
+ * distance establish that anchor's initial position relative to wherever the
+ * camera's local tracking origin currently is. ARCore's own tracked pose
+ * drives everything after that -- this file has no per-frame screen-
+ * projection math anymore (the fieldProjectionX/Y/rotateAroundCenter
+ * sensor-based approximation this used to also contain is gone; real ARCore
+ * tracking replaced it, per the member's explicit direction that marker
+ * movement and screen projection must come entirely from ARCore's tracked
+ * poses, never device pitch/yaw/roll).
  */
 object Geo {
     private const val EARTH_RADIUS_METERS = 6371000.0
@@ -42,19 +53,6 @@ object Geo {
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
         return EARTH_RADIUS_METERS * c
-    }
-
-    /**
-     * Ported from xreal.elonn.app's RuntimeInterpreter.FieldProjectionX: the
-     * phone-camera-passthrough projection (continuous compass heading, not a
-     * one-time AR-session calibration like the XREAL-headset-specific
-     * ArFieldRenderer.cs uses) -- the right one for a plain camera view.
-     * Returns null when the bearing falls outside the camera's horizontal FOV.
-     */
-    fun fieldProjectionX(bearing: Double, deviceHeading: Double, hFov: Double, viewportWidth: Double): Double? {
-        val relative = ((bearing - deviceHeading + 540.0) % 360.0) - 180.0
-        if (kotlin.math.abs(relative) > hFov / 2.0) return null
-        return (relative / hFov + 0.5) * viewportWidth
     }
 
     private fun toRadians(degrees: Double) = degrees * PI / 180.0

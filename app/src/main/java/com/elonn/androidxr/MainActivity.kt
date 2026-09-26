@@ -1,25 +1,20 @@
 package com.elonn.androidxr
 
-import android.Manifest
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -44,20 +39,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
-import com.elonn.androidxr.core.Geo
 import com.elonn.androidxr.core.PanelStore
 import com.elonn.androidxr.core.RuntimeAction
 import com.elonn.androidxr.core.RuntimeInterpreter
@@ -417,7 +409,6 @@ private fun FieldView(
     // windows measure/clamp against the safe-drawing area instead, one inset
     // in from that, so Entry/Carry windows never default or drag under a
     // system bar. Two different bounds, deliberately.
-    var cameraBoundsPx by remember { mutableStateOf(IntSize.Zero) }
     var boundsPx by remember { mutableStateOf(IntSize.Zero) }
 
     val carryObjects = state.carry.objectIds.mapNotNull { state.objectsById[it] }
@@ -432,13 +423,18 @@ private fun FieldView(
     val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        FieldCameraBackground(
+        ArCoreField(
             fieldObjects = fieldObjects,
-            selectedObjectId = state.selectedObjectId,
-            onSelect = onSelect,
-            boundsPx = cameraBoundsPx,
-            modifier = Modifier.fillMaxSize().onSizeChanged { cameraBoundsPx = it },
-        )
+            modifier = Modifier.fillMaxSize(),
+        ) { obj, distanceMeters, markerModifier ->
+            FieldMarker(
+                obj = obj,
+                distanceMeters = distanceMeters,
+                selected = obj.id == state.selectedObjectId,
+                onSelect = onSelect,
+                modifier = markerModifier,
+            )
+        }
 
         // Entry and every Carry window live in the safe-drawing area, not
         // the true full-screen bounds above -- otherwise a window's default
@@ -580,95 +576,24 @@ private fun EntryResultsWindow(
     )
 }
 
-/** Field's live camera preview plus GPS-bearing-placed markers for Field Objects that carry coordinates. */
-@Composable
-private fun FieldCameraBackground(
-    fieldObjects: List<WorldObject>,
-    selectedObjectId: String,
-    onSelect: (String) -> Unit,
-    boundsPx: IntSize,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    var permissionGranted by remember { mutableStateOf(hasCameraAndLocationPermission(context)) }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
-        permissionGranted = hasCameraAndLocationPermission(context)
-    }
-    LaunchedEffect(Unit) {
-        if (!permissionGranted) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION))
-        }
-    }
-
-    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
-        if (!permissionGranted) {
-            Column(modifier = Modifier.align(Alignment.Center).padding(24.dp)) {
-                Text("Field needs camera and location access to place markers around you.", style = MaterialTheme.typography.bodyMedium)
-                Button(
-                    onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION)) },
-                    modifier = Modifier.padding(top = 12.dp),
-                ) { Text("Grant access") }
-            }
-            return@Box
-        }
-
-        val location by rememberDeviceLocation()
-        val heading by rememberDeviceHeading()
-
-        CameraPreview(modifier = Modifier.fillMaxSize())
-
-        val fix = location
-        if (fix == null) {
-            Text(
-                "Waiting for a GPS fix...",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
-            )
-        } else if (boundsPx != IntSize.Zero) {
-            // Typical phone back-camera horizontal FOV; Runtime-side approximation --
-            // Field markers don't need frame-accurate placement to be real GPS/compass
-            // placement rather than a list. Real measured viewport width now (was a
-            // hardcoded 1080px guess, silently wrong on any other screen width).
-            val horizontalFovDegrees = 60.0
-            val viewportWidthPx = boundsPx.width.toDouble()
-            // No pitch/tilt sensing, so there's no real vertical projection (Geo.kt's
-            // port of xreal's FieldProjectionX is X-only, same as the reference) --
-            // vertical center of the camera view is the least-wrong default for
-            // "roughly eye level," not a hardcoded y=24 that assumed a short, app-bar-
-            // offset camera strip. Pinned to the literal top of the screen once the
-            // camera went full-height -- caught live on-device ("now in the top of
-            // the screen. Weird.").
-            val markerYPx = (boundsPx.height / 2) - 40
-            for (obj in fieldObjects) {
-                val loc = obj.location ?: continue
-                val bearing = Geo.bearingDegrees(fix.latitude, fix.longitude, loc.first, loc.second)
-                val distance = Geo.distanceMeters(fix.latitude, fix.longitude, loc.first, loc.second)
-                val x = Geo.fieldProjectionX(bearing, heading, horizontalFovDegrees, viewportWidthPx) ?: continue
-                FieldMarker(
-                    obj = obj,
-                    distanceMeters = distance,
-                    selected = obj.id == selectedObjectId,
-                    xOffsetPx = x.toInt(),
-                    yOffsetPx = markerYPx,
-                    onSelect = onSelect,
-                )
-            }
-        }
-    }
-}
-
+/**
+ * A Field marker card. Positioning is entirely the caller's concern now
+ * (ArCoreField.kt's ArCoreField passes a Modifier that places this at the
+ * real ARCore-tracked screen position for this object's Anchor, recomputed
+ * every frame from the camera's own view/projection matrices) -- this
+ * composable only renders the card, it does not know or care where it ends
+ * up on screen.
+ */
 @Composable
 private fun FieldMarker(
     obj: WorldObject,
     distanceMeters: Double,
     selected: Boolean,
-    xOffsetPx: Int,
-    yOffsetPx: Int,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
-            .offset { IntOffset(xOffsetPx - 80, yOffsetPx) }
+        modifier = modifier
             .background(
                 if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                 RoundedCornerShape(8.dp),

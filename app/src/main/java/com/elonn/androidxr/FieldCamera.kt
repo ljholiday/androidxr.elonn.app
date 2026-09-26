@@ -10,20 +10,13 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 
 fun hasCameraAndLocationPermission(context: Context): Boolean =
@@ -33,8 +26,10 @@ fun hasCameraAndLocationPermission(context: Context): Boolean =
 /**
  * The member's live GPS position, from the platform LocationManager -- no
  * extra Play Services dependency needed for the one-provider case this app
- * needs. Field markers have nothing to place relative to until this reports
- * a real fix.
+ * needs. Used exactly once per Field object, at real-anchor-creation time
+ * (see ArCorePassthrough.kt's ArFieldRenderer.syncAnchors) -- ARCore's own
+ * tracked Anchor pose is what moves markers on every frame after that, never
+ * this location stream directly.
  */
 @Composable
 fun rememberDeviceLocation(): State<Location?> {
@@ -66,11 +61,19 @@ fun rememberDeviceLocation(): State<Location?> {
 }
 
 /**
- * True compass heading in degrees (0 = north), from the rotation-vector
- * sensor -- the phone-camera equivalent of the compass calibration
- * xreal.elonn.app's ArFieldRenderer does once per AR session, except this
- * reads continuously (RuntimeInterpreter.FieldProjectionX, which Geo.kt
- * ports, takes a live heading rather than a one-time calibration).
+ * True compass heading (0 = north), from the rotation-vector sensor. Used
+ * exactly once per Field object, at real-anchor-creation time, to establish
+ * which direction in ARCore's local tracking space corresponds to true
+ * north (see ArFieldRenderer.placeAnchor's doc) -- never read again after
+ * that for an already-placed anchor. Device pitch and roll are never needed
+ * at all: ARCore's own tracked camera pose supplies the real per-frame
+ * orientation, which is exactly the "no device pitch/yaw/roll compensation"
+ * this Runtime was directed to avoid doing itself.
+ *
+ * The default rotation matrix assumes the device is lying flat on a table
+ * (typical compass-app orientation); remapCoordinateSystem(AXIS_X, AXIS_Z)
+ * is the standard remap for reading heading from a phone held upright as a
+ * camera viewfinder instead.
  */
 @Composable
 fun rememberDeviceHeading(): State<Double> {
@@ -82,20 +85,21 @@ fun rememberDeviceHeading(): State<Double> {
         val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         val listener = object : SensorEventListener {
             private val rotationMatrix = FloatArray(9)
+            private val remappedMatrix = FloatArray(9)
             private val orientation = FloatArray(3)
 
             override fun onSensorChanged(event: SensorEvent) {
                 SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                SensorManager.getOrientation(rotationMatrix, orientation)
-                val azimuthRadians = orientation[0]
-                val degrees = (Math.toDegrees(azimuthRadians.toDouble()) + 360.0) % 360.0
+                SensorManager.remapCoordinateSystem(rotationMatrix, SensorManager.AXIS_X, SensorManager.AXIS_Z, remappedMatrix)
+                SensorManager.getOrientation(remappedMatrix, orientation)
+                val headingDegrees = (Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0
+
                 // Raw rotation-vector heading is noisy indoors (magnetometer
-                // interference from steel framing/electronics) -- a real AR view
-                // needs this smoothed or markers flicker in and out as the
-                // compass jumps, even while the phone is held still. Circular
-                // exponential smoothing (shortest-path delta, wrapped 0-360).
+                // interference from steel framing/electronics); smoothed so a
+                // newly-placed anchor's calibration doesn't pick up a spurious
+                // jump. Circular shortest-path smoothing (wraps at 360).
                 val previous = headingState.value
-                val delta = ((degrees - previous + 540.0) % 360.0) - 180.0
+                val delta = ((headingDegrees - previous + 540.0) % 360.0) - 180.0
                 headingState.value = (previous + 0.2 * delta + 360.0) % 360.0
             }
 
@@ -109,42 +113,3 @@ fun rememberDeviceHeading(): State<Double> {
 
     return headingState
 }
-
-/** A live camera passthrough preview -- Field's actual background, not a screen behind a list. */
-@Composable
-fun CameraPreview(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            val previewView = PreviewView(ctx).apply {
-                // CameraX defaults to a SurfaceView-backed implementation, which
-                // composites as its own layer and can render outside/over the
-                // bounds Compose actually laid it out in once other content
-                // (markers, the top bar, Carry) overlaps it. COMPATIBLE mode
-                // uses a TextureView instead, drawn in the normal view
-                // hierarchy, which is what CameraX's own docs recommend
-                // whenever the preview is layered with other UI.
-                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            }
-            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-            cameraProviderFuture.addListener({
-                val cameraProvider = cameraProviderFuture.get()
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
-                }
-                try {
-                    cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview)
-                } catch (e: Exception) {
-                    // No back camera available on this device/emulator config -- the
-                    // preview stays blank; markers still compute and render on top.
-                }
-            }, ContextCompat.getMainExecutor(ctx))
-            previewView
-        },
-    )
-}
-

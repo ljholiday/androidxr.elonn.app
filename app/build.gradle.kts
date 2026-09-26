@@ -59,10 +59,29 @@ dependencies {
 
     // Jetpack XR SDK -- not used by the first screen yet, wired in now so the
     // dependency setup itself is part of the spike, not a later surprise.
-    implementation("androidx.xr.runtime:runtime:1.0.0-rc01")
+    // Session/Geospatial (androidx.xr.runtime, androidx.xr.arcore) were tried
+    // and dropped: GeospatialMode requires a live Google Cloud API key/
+    // account for VPS, an ongoing service dependency this platform
+    // deliberately avoids (decision.native_android_xr_candidate_runtime_20260924's
+    // "I am an open source guy from day one" -- see also the live session
+    // where this was caught: "I don't want to be married to google"). Plain
+    // ARCore's own local anchors need no such thing, and Geospatial was the
+    // only reason this app needed the Jetpack XR Session wrapper at all, so
+    // dropping it also let the earlier native HardwareBuffer bridge (worked
+    // around Jetpack XR's own off-GL-thread update loop) come out entirely --
+    // this app now owns a plain ARCore Session directly, on its own GL
+    // thread, the standard way every ordinary ARCore app does.
     implementation("androidx.xr.scenecore:scenecore:1.0.0-rc01")
     implementation("androidx.xr.compose:compose:1.0.0-beta01")
     implementation("androidx.xr.compose.material3:material3:1.0.0-alpha17")
+
+    // Plain ARCore: local motion tracking and local Anchors, entirely
+    // on-device, no Google Cloud account/API key/network dependency. GPS and
+    // compass (Geo.kt, FieldCamera.kt) are used only once, to compute each
+    // Field object's initial position relative to the camera's own local
+    // tracking origin at that moment -- ARCore's own tracked Anchor pose
+    // drives everything after that, never per-frame heading/pitch/roll math.
+    implementation("com.google.ar:core:1.56.0")
 
     // World/Conductor networking -- same real contract every other Runtime uses
     // (POST /world/call, api.elonn's generic auth-form Dataset). org.json is
@@ -74,13 +93,4 @@ dependencies {
     // token via Unity PlayerPrefs (plaintext); Android's standard equivalent for
     // a real bearer credential is EncryptedSharedPreferences, not a plaintext file.
     implementation("androidx.security:security-crypto:1.1.0")
-
-    // Field is a camera-passthrough AR view with GPS/compass-placed markers
-    // (xreal.elonn.app's ArFieldRenderer.cs + Geo.cs), not a list -- CameraX
-    // gives the live camera preview; location/heading come from platform
-    // LocationManager/SensorManager, no extra dependency needed for those.
-    implementation("androidx.camera:camera-core:1.5.0")
-    implementation("androidx.camera:camera-camera2:1.5.0")
-    implementation("androidx.camera:camera-lifecycle:1.5.0")
-    implementation("androidx.camera:camera-view:1.5.0")
 }

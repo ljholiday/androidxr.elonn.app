@@ -13,6 +13,11 @@
         android:allowBackup="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
+        <!-- Required by ARCore itself, not just Jetpack XR: Session.create()
+             fails with a FatalException ("manifest must contain meta-data
+             com.google.ar.core") without this. Caught live on-device. -->
+        <meta-data android:name="com.google.ar.core" android:value="required" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
