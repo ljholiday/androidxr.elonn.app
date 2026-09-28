@@ -20,15 +20,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 
 /**
- * Also checks SCENE_UNDERSTANDING_COARSE (required by androidx.xr.arcore's Anchor.create), not
- * just camera/location -- a real bug caught live: this function used to check only the original
- * two, so once a member had already granted those, the permission-request launcher never fired
- * again for the newly-added third permission, leaving it permanently ungranted after an update.
+ * Only CAMERA/ACCESS_FINE_LOCATION gate Field's UI. SCENE_UNDERSTANDING_COARSE (required by
+ * androidx.xr.arcore's Anchor.create) is requested alongside these two (see ArCoreField's
+ * permissionLauncher) but deliberately NOT required here -- confirmed live on a real Galaxy S24:
+ * that permission never appears in the device's runtime-permission grant list at all, meaning
+ * this ordinary phone's OS has no grant UI for an Android XR-specific permission, so requiring it
+ * would permanently block Field on any non-XR device. Anchor.create failing for a real lack of
+ * scene-understanding access is already handled gracefully by placeMarker's retry-then-give-up
+ * logic, which is the right place for that failure to surface, not a permanent UI block here.
  */
 fun hasFieldPermissions(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, "android.permission.SCENE_UNDERSTANDING_COARSE") == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
 /**
  * The member's live GPS position, from the platform LocationManager -- no

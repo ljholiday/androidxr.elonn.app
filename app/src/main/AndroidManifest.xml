@@ -16,6 +16,16 @@
         android:allowBackup="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
+        <!-- Still required even after moving to Jetpack XR: on an ordinary phone (confirmed live
+             on a real Galaxy S24), androidx.xr.arcore/androidx.xr.runtime.Session falls back to
+             wrapping classic ARCore internally. There is no OpenXR/headset compositor backend on
+             mobile hardware. Removing this caused a real FatalException at runtime
+             (ARCore-ArCoreApk: manifest must contain meta-data com.google.ar.core). The Android
+             XR emulator does not hit this path at all (it uses OpenXR directly, confirmed via its
+             own xrCreateInstance/xrCreateSession logs with no ArCoreApk involvement), so this is
+             safe there too. -->
+        <meta-data android:name="com.google.ar.core" android:value="required" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

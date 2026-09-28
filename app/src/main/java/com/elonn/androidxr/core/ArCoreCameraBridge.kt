@@ -30,11 +30,26 @@ import androidx.xr.runtime.SessionCreateSuccess
  * of an ongoing Google Cloud dependency.
  */
 suspend fun createXrSession(context: Context): Session? {
+    // Session.create/Scene.initialize can throw rather than return a sealed failure result --
+    // confirmed via a real FATAL EXCEPTION crash on a physical Galaxy S24 (an ordinary phone,
+    // not Android XR hardware): androidx.xr.scenecore.Scene.initialize throws
+    // NoSuchElementException("List is empty") because no real Android XR runtime/compositor
+    // backend is available on that device at all. Must not let that propagate uncaught --
+    // that would crash the whole app process, not just fail to create a session.
     val session =
-        when (val result = Session.create(context)) {
-            is SessionCreateSuccess -> result.session
-            else -> return null
+        try {
+            when (val result = Session.create(context)) {
+                is SessionCreateSuccess -> result.session
+                else -> return null
+            }
+        } catch (e: Exception) {
+            return null
         }
-    val configured = session.configure(Config(deviceTracking = DeviceTrackingMode.SPATIAL))
+    val configured =
+        try {
+            session.configure(Config(deviceTracking = DeviceTrackingMode.SPATIAL))
+        } catch (e: Exception) {
+            return null
+        }
     return if (configured is SessionConfigureSuccess) session else null
 }
