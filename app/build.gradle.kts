@@ -57,31 +57,23 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
 
-    // Jetpack XR SDK -- not used by the first screen yet, wired in now so the
-    // dependency setup itself is part of the spike, not a later surprise.
-    // Session/Geospatial (androidx.xr.runtime, androidx.xr.arcore) were tried
-    // and dropped: GeospatialMode requires a live Google Cloud API key/
-    // account for VPS, an ongoing service dependency this platform
-    // deliberately avoids (decision.native_android_xr_candidate_runtime_20260924's
-    // "I am an open source guy from day one" -- see also the live session
-    // where this was caught: "I don't want to be married to google"). Plain
-    // ARCore's own local anchors need no such thing, and Geospatial was the
-    // only reason this app needed the Jetpack XR Session wrapper at all, so
-    // dropping it also let the earlier native HardwareBuffer bridge (worked
-    // around Jetpack XR's own off-GL-thread update loop) come out entirely --
-    // this app now owns a plain ARCore Session directly, on its own GL
-    // thread, the standard way every ordinary ARCore app does.
+    // Jetpack XR SDK. Session/perception is back (androidx.xr.runtime,
+    // androidx.xr.arcore) -- a prior attempt at this was dropped for two
+    // reasons that still apply and are deliberately NOT reintroduced here:
+    // (1) GeospatialMode needs a live Google Cloud API key/account, which
+    // conflicts with decision.native_android_xr_candidate_runtime_20260924
+    // ("I am an open source guy from day one" / "I don't want to be married
+    // to google") -- Geospatial is not configured anywhere in this rewrite.
+    // (2) the old Session wrapper's own update loop ran off the GL thread
+    // and crashed on-device with MissingGlContextException -- this rewrite
+    // has no GLSurfaceView/manual Session.update() call at all; SceneCore
+    // owns rendering, the app only reads Anchor/Trackable poses and attaches
+    // Entities to them (see ArCorePassthrough.kt).
+    implementation("androidx.xr.runtime:runtime:1.0.0-rc01")
+    implementation("androidx.xr.arcore:arcore:1.0.0-rc01")
     implementation("androidx.xr.scenecore:scenecore:1.0.0-rc01")
     implementation("androidx.xr.compose:compose:1.0.0-beta01")
     implementation("androidx.xr.compose.material3:material3:1.0.0-alpha17")
-
-    // Plain ARCore: local motion tracking and local Anchors, entirely
-    // on-device, no Google Cloud account/API key/network dependency. GPS and
-    // compass (Geo.kt, FieldCamera.kt) are used only once, to compute each
-    // Field object's initial position relative to the camera's own local
-    // tracking origin at that moment -- ARCore's own tracked Anchor pose
-    // drives everything after that, never per-frame heading/pitch/roll math.
-    implementation("com.google.ar:core:1.56.0")
 
     // World/Conductor networking -- same real contract every other Runtime uses
     // (POST /world/call, api.elonn's generic auth-form Dataset). org.json is

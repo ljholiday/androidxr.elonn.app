@@ -1,70 +1,40 @@
 package com.elonn.androidxr.core
 
 import android.content.Context
-import com.google.ar.core.ArCoreApk
-import com.google.ar.core.Config
-import com.google.ar.core.Frame
-import com.google.ar.core.Pose
-import com.google.ar.core.Session
+import androidx.xr.runtime.Config
+import androidx.xr.runtime.DeviceTrackingMode
+import androidx.xr.runtime.Session
+import androidx.xr.runtime.SessionConfigureSuccess
+import androidx.xr.runtime.SessionCreateSuccess
 
 /**
- * Owns a plain, ordinary ARCore Session directly -- no Jetpack XR Session
- * wrapper, no Geospatial, no Google Cloud account or API key, nothing but
- * ARCore's own on-device motion tracking. This is the standard way every
- * ARCore app has worked since ARCore 1.0.
+ * Creates and configures the Jetpack XR Session Field's perception (Anchor/Trackable poses,
+ * device pose) and spatial rendering (SceneCore Entities attached to those poses, see
+ * ArCorePassthrough.kt) run on.
  *
- * GPS and compass (Geo.kt, FieldCamera.kt) are used exactly once, at
- * [createAnchor] time, to compute a Field object's position relative to
- * wherever the camera's own local tracking origin currently is. After that,
- * the Anchor's own tracked Pose is what moves the marker -- this class and
- * its caller never touch device pitch/yaw/roll or recompute a bearing again.
+ * Unlike classic ARCore, this Session owns its own render loop internally -- there is no
+ * GLSurfaceView, no manual per-frame Session.update() call, and no GL-thread requirement
+ * anywhere in this app. That matters here specifically: an earlier attempt at using Jetpack
+ * XR's Session wrapper was reverted because its own internal update loop ran off the GL thread
+ * and crashed on-device with MissingGlContextException. This rewrite has no app-owned render
+ * loop for that update loop to conflict with in the first place -- SceneCore renders everything.
  *
- * Session.update() must be called from a thread with a current EGL context
- * (the classic ARCore camera-texture mode requires it) -- [update] is meant
- * to be called from the GLSurfaceView's own render thread, not a background
- * dispatcher. That off-GL-thread mismatch (via Jetpack XR's own Session
- * update loop) is what crashed live on-device with MissingGlContextException
- * before this was simplified back to owning the Session directly.
+ * DeviceTrackingMode.SPATIAL must be configured explicitly: a fresh Session defaults to
+ * DISABLED, which throws IllegalStateException from ArDevice.getInstance() the moment anything
+ * reads the device's current pose -- confirmed live via a real crash on the emulator, not
+ * assumed from docs.
+ *
+ * No GeospatialMode/Google Cloud account or API key anywhere: this app only ever creates local
+ * Anchors from a Pose it computes itself (GPS bearing/distance, see Geo.kt), never a Geospatial
+ * anchor -- matching decision.native_android_xr_candidate_runtime_20260924's explicit rejection
+ * of an ongoing Google Cloud dependency.
  */
-class ArCoreCameraBridge private constructor(val session: Session) {
-
-    fun resume() = session.resume()
-
-    fun pause() = session.pause()
-
-    fun setCameraTextureName(textureId: Int) = session.setCameraTextureName(textureId)
-
-    /** Must be called from the GL thread; see class doc. */
-    fun update(): Frame = session.update()
-
-    /** A real, on-device ARCore Anchor -- no cloud call, tracked purely by local VIO from here on. */
-    fun createAnchor(pose: Pose) = session.createAnchor(pose)
-
-    companion object {
-        /**
-         * Creates and configures a plain ARCore Session. Returns null if
-         * ARCore isn't installed/supported -- the caller decides how to
-         * surface that (e.g. ArCoreApk.getInstance().requestInstall for the
-         * "not installed" case), this is not the place to guess at recovery.
-         */
-        fun create(context: Context): ArCoreCameraBridge? {
-            val availability = ArCoreApk.getInstance().checkAvailability(context)
-            if (!availability.isSupported) return null
-
-            val session = Session(context)
-            val config =
-                Config(session).apply {
-                    // ARCore's actual default -- explicit here only so it's
-                    // never silently changed by some other Config default
-                    // shifting underneath this app later.
-                    textureUpdateMode = Config.TextureUpdateMode.BIND_TO_TEXTURE_EXTERNAL_OES
-                    // Never enabled: Geospatial requires a live Google Cloud
-                    // API key/account. Local motion tracking and local
-                    // Anchors need no such thing.
-                    geospatialMode = Config.GeospatialMode.DISABLED
-                }
-            session.configure(config)
-            return ArCoreCameraBridge(session)
+suspend fun createXrSession(context: Context): Session? {
+    val session =
+        when (val result = Session.create(context)) {
+            is SessionCreateSuccess -> result.session
+            else -> return null
         }
-    }
+    val configured = session.configure(Config(deviceTracking = DeviceTrackingMode.SPATIAL))
+    return if (configured is SessionConfigureSuccess) session else null
 }

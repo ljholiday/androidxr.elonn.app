@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "ElonnWorldClient"
 
@@ -37,7 +38,16 @@ data class WorldCallRequest(
  * 2D Android screen right now, not a spatial one, so every XR-only capability
  * is false until the actual Jetpack XR scene work lands.
  */
-class WorldClient(private val http: OkHttpClient = OkHttpClient()) {
+class WorldClient(
+    // OkHttp's own default (10s connect/read/write) genuinely isn't enough -- a real
+    // world.compose search ("cars") took just over 11s and got cut off by it live on-device.
+    private val http: OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build(),
+) {
 
     suspend fun call(token: String, datasetId: String?, request: WorldCallRequest): JSONObject {
         val envelope = JSONObject().apply {
@@ -60,7 +70,12 @@ class WorldClient(private val http: OkHttpClient = OkHttpClient()) {
                     put("capabilities", JSONObject().apply {
                         put("dock", false)
                         put("surface_stacks", false)
-                        put("field_markers", false)
+                        // Real Field markers (GPS-placed Anchor + PanelEntity via Jetpack XR,
+                        // see ArCorePassthrough.kt) are actually implemented now -- this was
+                        // correctly false while this Runtime was only a flat 2D screen with no
+                        // Field rendering at all, but leaving it false now under-reports real
+                        // capability and likely causes World to omit Field placements entirely.
+                        put("field_markers", true)
                         put("pointer_input", true)
                         put("stereo_rendering", false)
                         put("headset_mode", false)

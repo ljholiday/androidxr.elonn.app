@@ -19,9 +19,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 
-fun hasCameraAndLocationPermission(context: Context): Boolean =
+/**
+ * Also checks SCENE_UNDERSTANDING_COARSE (required by androidx.xr.arcore's Anchor.create), not
+ * just camera/location -- a real bug caught live: this function used to check only the original
+ * two, so once a member had already granted those, the permission-request launcher never fired
+ * again for the newly-added third permission, leaving it permanently ungranted after an update.
+ */
+fun hasFieldPermissions(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(context, "android.permission.SCENE_UNDERSTANDING_COARSE") == PackageManager.PERMISSION_GRANTED
 
 /**
  * The member's live GPS position, from the platform LocationManager -- no
@@ -37,7 +44,7 @@ fun rememberDeviceLocation(): State<Location?> {
     val locationState = remember { mutableStateOf<Location?>(null) }
 
     DisposableEffect(Unit) {
-        if (!hasCameraAndLocationPermission(context)) {
+        if (!hasFieldPermissions(context)) {
             return@DisposableEffect onDispose {}
         }
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager

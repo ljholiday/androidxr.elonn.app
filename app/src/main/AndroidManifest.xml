@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Required by androidx.xr.arcore's Anchor.create/load/persist (Jetpack XR's ARCore,
+         not classic ARCore). See developer.android.com/develop/xr/jetpack-xr-sdk/arcore/anchors. -->
+    <uses-permission android:name="android.permission.SCENE_UNDERSTANDING_COARSE" />
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
@@ -13,11 +16,6 @@
         android:allowBackup="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <!-- Required by ARCore itself, not just Jetpack XR: Session.create()
-             fails with a FatalException ("manifest must contain meta-data
-             com.google.ar.core") without this. Caught live on-device. -->
-        <meta-data android:name="com.google.ar.core" android:value="required" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -25,6 +23,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Without this, spatial content (PanelEntity/AnchorSpace) never renders at all.
+                 Confirmed live: creation succeeded with zero errors, but nothing appeared,
+                 because Home Space confines an app to a single flat 2D panel with no spatial
+                 rendering period. MANAGED lets the app call Scene.requestFullSpace() itself
+                 (see ArCorePassthrough.kt) rather than always launching directly into Full Space. -->
+            <property
+                android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+                android:value="XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED" />
         </activity>
 
     </application>
