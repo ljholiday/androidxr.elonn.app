@@ -445,17 +445,30 @@ private fun FieldView(
         ).distinct().mapNotNull { state.objectsById[it] }
     val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
 
+    val markerContent: @Composable (WorldObject, Double, Modifier) -> Unit = { obj, distanceMeters, markerModifier ->
+        FieldMarker(
+            obj = obj,
+            distanceMeters = distanceMeters,
+            selected = obj.id == state.selectedObjectId,
+            onSelect = onSelect,
+            modifier = markerModifier,
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        ArCoreField(
-            fieldObjects = fieldObjects,
-            modifier = Modifier.fillMaxSize(),
-        ) { obj, distanceMeters, markerModifier ->
-            FieldMarker(
-                obj = obj,
-                distanceMeters = distanceMeters,
-                selected = obj.id == state.selectedObjectId,
-                onSelect = onSelect,
-                modifier = markerModifier,
+        // Headset: real Jetpack XR markers through SceneCore. Phone: classic ARCore camera
+        // passthrough. Both render the same markers through the same markerContent.
+        if (usesSpatialFieldPresentation(LocalContext.current)) {
+            ArCoreField(
+                fieldObjects = fieldObjects,
+                modifier = Modifier.fillMaxSize(),
+                markerContent = markerContent,
+            )
+        } else {
+            ClassicArCoreField(
+                fieldObjects = fieldObjects,
+                modifier = Modifier.fillMaxSize(),
+                markerContent = markerContent,
             )
         }
 

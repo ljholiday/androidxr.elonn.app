@@ -85,4 +85,9 @@ dependencies {
     // token via Unity PlayerPrefs (plaintext); Android's standard equivalent for
     // a real bearer credential is EncryptedSharedPreferences, not a plaintext file.
     implementation("androidx.security:security-crypto:1.1.0")
+
+    // Classic ARCore, used only for the phone presentation (ClassicArField.kt). The headset
+    // presentation uses Jetpack XR's Session/Anchor APIs instead. Version as it was when this
+    // path last ran on a Galaxy S24.
+    implementation("com.google.ar:core:1.56.0")
 }
