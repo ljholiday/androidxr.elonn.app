@@ -182,6 +182,13 @@ fun ArCoreField(
     }
 }
 
+/**
+ * Radial distance, in meters, at which every Field marker is presented in SceneCore. A Runtime
+ * presentation choice, not canonical data: Field placements carry a geographic location and
+ * no distance unit (dev.elonn.local canonical placement/field docs).
+ */
+private const val FieldPresentationRadiusMeters = 3.0f
+
 private class PlacedMarker(private val anchor: Anchor, private val panel: PanelEntity) {
     fun dispose() {
         // Entity.dispose() is deprecated -- entities are reclaimed automatically once detached
@@ -194,13 +201,12 @@ private class PlacedMarker(private val anchor: Anchor, private val panel: PanelE
 /**
  * Places one real Anchor + PanelEntity for a single Field object, at a Pose computed once from
  * the device's current forward direction rotated by (bearing - headingDegrees) and scaled by
- * distanceMeters -- the same calibration xreal.elonn.app's ArFieldRenderer.cs and the old
+ * FieldPresentationRadiusMeters -- the same bearing calibration xreal.elonn.app's ArFieldRenderer.cs and the old
  * classic-ARCore renderer both use: establish which direction in the tracking space's local
  * coordinates corresponds to true north (by rotating the device's own current forward direction
  * back by the live compass heading), then rotate further by the object's real-world bearing.
- * Real-world distance in meters is used directly (not artificially scaled) -- distant Field
- * objects appear correspondingly far away and small, matching how every other Runtime places
- * them.
+ * The radial distance is FieldPresentationRadiusMeters, not the real distance: bearing is
+ * geographically true, radius is presentation (see that constant).
  *
  * Retries up to 20 times (300ms apart): the device/head tracking system frequently hasn't
  * produced a valid tracked pose/timestamp yet in the moment right after session creation --
@@ -233,7 +239,11 @@ private suspend fun placeMarker(
             val rotatedX = forward.x * cosA - forward.z * sinA
             val rotatedZ = forward.x * sinA + forward.z * cosA
 
-            val distance = distanceMeters.toFloat()
+            // Geographic distance is data; the radial position is presentation. Direction stays
+            // true to the member's bearing, but the marker sits at a fixed comfortable radius so
+            // distant objects (1,000+ km) remain visible in Field instead of landing far beyond
+            // the view. The true distance still reaches markerContent via distanceMeters.
+            val distance = FieldPresentationRadiusMeters
             val anchorPosition =
                 Vector3(
                     devicePose.translation.x + rotatedX * distance,
