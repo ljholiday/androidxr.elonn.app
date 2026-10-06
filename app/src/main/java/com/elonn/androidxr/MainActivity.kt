@@ -119,7 +119,9 @@ private sealed interface Screen {
 private fun ElonnApp() {
     val context = LocalContext.current
     val auth = remember { AuthClient() }
-    val world = remember { WorldClient() }
+    val world = remember {
+        WorldClient(renderer = if (usesSpatialFieldPresentation(context)) "headset" else "phone")
+    }
     val tokenStore = remember { TokenStore(context) }
     val scope = rememberCoroutineScope()
 
@@ -271,6 +273,16 @@ private fun ElonnApp() {
                         currentToken,
                         current.state.datasetId,
                         WorldCallRequest(operation = "world.close", inputText = "world.close", originObject = objectId),
+                    )
+                }
+            },
+            onBack = { objectId ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        WorldCallRequest(operation = "world.back", inputText = "world.back", originObject = objectId),
                     )
                 }
             },
@@ -427,6 +439,7 @@ private fun FieldView(
     onSelect: (String) -> Unit,
     onDispatch: (String, JSONObject) -> Unit,
     onClose: (String) -> Unit,
+    onBack: (String) -> Unit,
     onSubmitFind: (String) -> Unit,
     onClearResults: () -> Unit,
 ) {
@@ -512,6 +525,8 @@ private fun FieldView(
                             defaultHeight = 220.dp,
                             closable = true,
                             onClosed = { onClose(obj.id) },
+                            canGoBack = state.navigationById[obj.id]?.hasHistory == true,
+                            onBack = { onBack(obj.id) },
                             header = { _, _ ->
                                 Text(
                                     state.carryTitle(obj),

@@ -71,6 +71,10 @@ fun FloatingWindow(
     defaultHeight: Dp,
     closable: Boolean,
     onClosed: (() -> Unit)? = null,
+    // Back is offered only when the Object has a previous navigation state (layout.md, Object
+    // presentation). Only Object windows (closable) offer it; the Entry window never does.
+    canGoBack: Boolean = false,
+    onBack: (() -> Unit)? = null,
     // A distinct value here (e.g. a counter bumped once per completed search) forces this window
     // open even if the member had it collapsed -- so a fresh result set (or its error) is never
     // left hidden. null means "no forced expand," the default for every window that doesn't need
@@ -179,8 +183,14 @@ fun FloatingWindow(
                 .padding(horizontal = ElonnSpacing.sm, vertical = ElonnSpacing.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Title bar order per layout.md: back, collapse, close. Back and collapse are Object
+            // controls, so the Entry window (non-closable) keeps only its own show/hide.
+            if (closable && canGoBack && onBack != null) {
+                TextButton(onClick = onBack) { Text("Back") }
+            }
             header(collapsed, ::toggleCollapsed)
             if (closable) {
+                TextButton(onClick = ::toggleCollapsed) { Text(if (collapsed) "Expand" else "Collapse") }
                 TextButton(onClick = {
                     store.forget(panelId)
                     onClosed?.invoke()

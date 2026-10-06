@@ -34,11 +34,14 @@ data class WorldCallRequest(
 /**
  * Talks to exactly one endpoint: POST /world/call. World has no other routes.
  * Mirrors xreal.elonn.app's WorldClient.cs -- same Call envelope shape, same
- * headers. This Runtime's capabilities are reported honestly: it is a plain
- * 2D Android screen right now, not a spatial one, so every XR-only capability
- * is false until the actual Jetpack XR scene work lands.
+ * headers. The renderer and capabilities are reported as this build presents them:
+ * a headset declares "headset" and the Field markers it renders, a phone declares
+ * "phone" and only what the phone presentation renders.
  */
 class WorldClient(
+    // Declared to World on every Call. It must name the presentation this build actually renders
+    // ("headset" or "phone"), so World composes content this device can show.
+    private val renderer: String,
     // OkHttp's own default (10s connect/read/write) genuinely isn't enough -- a real
     // world.compose search ("cars") took just over 11s and got cut off by it live on-device.
     private val http: OkHttpClient =
@@ -66,7 +69,7 @@ class WorldClient(
                 put("runtime", JSONObject().apply {
                     put("id", RuntimeConfig.RUNTIME_ID)
                     put("version", RuntimeConfig.VERSION)
-                    put("renderer", "phone")
+                    put("renderer", renderer)
                     put("capabilities", JSONObject().apply {
                         put("dock", false)
                         put("surface_stacks", false)
