@@ -164,11 +164,6 @@ internal fun ArCoreField(
 
         val withLocation = fieldObjects.filter { it.location != null }
         val wantedIds = withLocation.map { it.id }.toSet()
-        android.util.Log.d(
-            "ElonnField",
-            "reconcile: fieldObjects=${fieldObjects.size} withLocation=${withLocation.size} " +
-                "already-placed=${markersByObjectId.keys} fix=(${fix.latitude},${fix.longitude})",
-        )
 
         val staleIds = markersByObjectId.keys - wantedIds
         for (id in staleIds) {
@@ -180,17 +175,8 @@ internal fun ArCoreField(
             val loc = obj.location ?: continue
             val bearing = Geo.bearingDegrees(fix.latitude, fix.longitude, loc.first, loc.second)
             val distance = Geo.distanceMeters(fix.latitude, fix.longitude, loc.first, loc.second)
-            android.util.Log.d(
-                "ElonnField",
-                "placing marker for ${obj.id} (${obj.title}) at (${loc.first},${loc.second}) bearing=$bearing distance=$distance",
-            )
             val marker = placeMarker(currentSession, activity, obj, distance, bearing, headingDegrees, markerContent)
-            if (marker != null) {
-                markersByObjectId[obj.id] = marker
-                android.util.Log.d("ElonnField", "marker placed for ${obj.id}")
-            } else {
-                android.util.Log.d("ElonnField", "marker placement FAILED for ${obj.id} after retries")
-            }
+            if (marker != null) markersByObjectId[obj.id] = marker
         }
     }
 
@@ -413,7 +399,6 @@ private suspend fun placeMarker(
             // crash, not guessed.
             when (val result = Anchor.create(session, anchorPose)) {
                 is AnchorCreateSuccess -> {
-                    android.util.Log.d("ElonnField", "Anchor.create succeeded for ${obj.id} after $attempts attempt(s)")
                     val anchor = result.anchor
                     val anchorSpace = AnchorSpace.create(session, anchor)
                     val composeView =
@@ -449,12 +434,10 @@ private suspend fun placeMarker(
                     return PlacedMarker(anchor, panel, anchorPosition)
                 }
                 else -> {
-                    android.util.Log.d("ElonnField", "Anchor.create non-success for ${obj.id} attempt $attempts: $result")
                     delay(300)
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.d("ElonnField", "Anchor.create threw for ${obj.id} attempt $attempts: ${e.javaClass.simpleName}: ${e.message}")
             delay(300)
         }
     }

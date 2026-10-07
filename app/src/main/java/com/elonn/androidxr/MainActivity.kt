@@ -157,12 +157,6 @@ private fun ElonnApp() {
         try {
             val dataset = world.call(currentToken, datasetId, request)
             val state = RuntimeInterpreter.apply(dataset)
-            android.util.Log.d(
-                "ElonnField",
-                "carry=${state.carry.objectIds} focus=${state.selectedObjectId} " +
-                    "field=${state.field.objectIds} fieldCollections=${state.field.collectionIds} " +
-                    "objectsById.size=${state.objectsById.size}",
-            )
             screen = Screen.Field(state)
         } catch (e: WorldAuthRequiredException) {
             tokenStore.clear()
