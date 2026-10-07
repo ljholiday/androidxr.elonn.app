@@ -30,6 +30,7 @@ import androidx.xr.runtime.SessionCreateSuccess
  * of an ongoing Google Cloud dependency.
  */
 suspend fun createXrSession(context: Context): Session? {
+    android.util.Log.d("ElonnField", "createXrSession called")
     // Session.create/Scene.initialize can throw rather than return a sealed failure result --
     // confirmed via a real FATAL EXCEPTION crash on a physical Galaxy S24 (an ordinary phone,
     // not Android XR hardware): androidx.xr.scenecore.Scene.initialize throws

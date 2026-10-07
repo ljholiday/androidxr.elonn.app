@@ -26,7 +26,8 @@ import kotlin.math.sqrt
  * poses, never device pitch/yaw/roll).
  */
 object Geo {
-    private const val EARTH_RADIUS_METERS = 6371000.0
+    /** Mean Earth radius, the spherical model used for distance and for Field elevation. */
+    const val EARTH_RADIUS_METERS = 6371000.0
 
     /** Initial bearing in degrees (0-360, 0 = true north), from point 1 to point 2. */
     fun bearingDegrees(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

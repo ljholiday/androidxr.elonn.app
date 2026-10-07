@@ -3,6 +3,7 @@ package com.elonn.androidxr
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -13,8 +14,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.Surface
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -26,19 +32,22 @@ import androidx.xr.arcore.Anchor
 import androidx.xr.arcore.AnchorCreateSuccess
 import androidx.xr.arcore.ArDevice
 import androidx.xr.runtime.Session
-import androidx.xr.runtime.math.IntSize2d
+import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.AnchorSpace
 import androidx.xr.scenecore.PanelEntity
+import androidx.xr.scenecore.Space
 import androidx.xr.scenecore.scene
 import com.elonn.androidxr.core.Geo
 import com.elonn.androidxr.core.WorldObject
 import com.elonn.androidxr.core.createXrSession
 import kotlinx.coroutines.delay
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Field: real ARCore-for-Jetpack-XR markers, placed via GPS bearing/distance exactly as the old
@@ -69,10 +78,12 @@ import kotlin.math.sin
  * different API.
  */
 @Composable
-fun ArCoreField(
+internal fun ArCoreField(
     fieldObjects: List<WorldObject>,
     modifier: Modifier = Modifier,
     markerContent: @Composable (obj: WorldObject, distanceMeters: Double, modifier: Modifier) -> Unit,
+    carry: CarryInputs,
+    carryContent: @Composable (CarryInputs) -> Unit,
 ) {
     val context = LocalContext.current
     val activity = context as ComponentActivity
@@ -126,6 +137,7 @@ fun ArCoreField(
             // PROPERTY_XR_ACTIVITY_START_MODE=XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED
             // (AndroidManifest.xml) to be allowed to call this itself.
             created.scene.requestFullSpace()
+            android.util.Log.d("ElonnField", "requestFullSpace sent session=${System.identityHashCode(created)}")
             session = created
         }
     }
@@ -133,10 +145,28 @@ fun ArCoreField(
     val location by rememberDeviceLocation()
     val headingDegrees by rememberDeviceHeading()
     val markersByObjectId = remember { mutableMapOf<String, PlacedMarker>() }
+    // The hosted Carry view reads these on each composition, so it always shows the current
+    // Entry, results, and Carry state rather than the state from when its panel was created.
+    val carryState = remember { mutableStateOf(carry) }
+    SideEffect { carryState.value = carry }
+    val carryPanelRef = remember { mutableStateOf<PanelEntity?>(null) }
+    val passCounter = remember { intArrayOf(0) }
+    passCounter[0]++
+    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=A(before-disposable) permission=$permissionGranted")
+    val instanceId = remember { System.identityHashCode(Any()) }
+    android.util.Log.d("ElonnField", "ArCoreField composed instance=$instanceId session=${System.identityHashCode(session)}")
+    DisposableEffect(Unit) {
+        android.util.Log.d("ElonnField", "ArCoreField disposable-enter instance=$instanceId")
+        onDispose {
+            android.util.Log.d("ElonnField", "ArCoreField onDispose instance=$instanceId panel=${System.identityHashCode(carryPanelRef.value)}")
+            carryPanelRef.value?.parent = null
+        }
+    }
 
     // The only place GPS/compass math runs: whenever the Field object set or the member's
     // location changes, reconcile which objects have a real Anchor+panel yet. Existing markers
     // are left completely untouched -- their pose is the Anchor's own tracked pose from here on.
+    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=B(before-reconcile) session=${System.identityHashCode(session)}")
     LaunchedEffect(session, fieldObjects, location?.latitude, location?.longitude) {
         val currentSession = session ?: return@LaunchedEffect
         val fix = location ?: return@LaunchedEffect
@@ -173,6 +203,82 @@ fun ArCoreField(
         }
     }
 
+    // Carry lives in its own panel, sized CarryPanelSizeMeters and hosted like the Field markers,
+    // so it is not clipped by the system-sized Activity main panel. Each frame its pose is the
+    // head-lock calculation: a point a fixed distance ahead of the device, with the device's
+    // rotation. Field markers stay where their anchors put them and turn toward the member.
+    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=C(before-carry) session=${System.identityHashCode(session)}")
+    LaunchedEffect(session) {
+        val currentSession = session ?: return@LaunchedEffect
+        android.util.Log.d("ElonnField", "carry effect start instance=$instanceId session=${System.identityHashCode(currentSession)}")
+        try {
+        // Detach any Carry panel from an earlier run first. This effect can run more than once for
+        // the same session, and each run would otherwise leave a second Carry panel in the scene.
+        // At most one Carry host per session. Remove the existing host explicitly before replacing it.
+        carryPanelRef.value?.let { previous ->
+            previous.parent = null
+            android.util.Log.d("ElonnField", "carry host REMOVED id=${System.identityHashCode(previous)} before replacement")
+        }
+        val carryView =
+            ComposeView(activity).apply {
+                setViewTreeLifecycleOwner(activity)
+                setViewTreeViewModelStoreOwner(activity)
+                setViewTreeSavedStateRegistryOwner(activity)
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    ElonnTheme {
+                        // A plain view has no Surface to set the content color, so text would
+                        // fall back to black on the dark Carry windows.
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ) {
+                            carryState.value?.let {
+                                android.util.Log.d("ElonnField", "carry-content composed view=${System.identityHashCode(this@apply)} windowsState=${it.state.carry.objectIds}")
+                                carryContent(it)
+                            }
+                        }
+                    }
+                }
+            }
+        val carryPanel =
+            PanelEntity.create(
+                currentSession,
+                carryView,
+                CarryPanelSizeMeters,
+                "carry",
+                Pose(Vector3(0f, 0f, 0f), Quaternion.fromEulerAngles(0f, 0f, 0f)),
+                // The activity space is SceneCore's own default parent for panels. Without a
+                // parent, the head-lock pose written in Space.REAL_WORLD throws at runtime.
+                currentSession.scene.activitySpace,
+            )
+        carryPanelRef.value = carryPanel
+        android.util.Log.d("ElonnField", "carry host LIVE id=${System.identityHashCode(carryPanel)}")
+        android.util.Log.d("ElonnField", "carry-panel CREATED id=${System.identityHashCode(carryPanel)} size=${carryPanel.size} pixels=${carryPanel.sizeInPixels}")
+        // Stops once a newer run has replaced this panel, so only the current panel is moved.
+        while (carryPanelRef.value === carryPanel) {
+            withFrameNanos {
+                val device = ArDevice.getInstance(currentSession).state.value.devicePose
+                val ahead = device.rotation * Vector3(0f, 0f, -CarryPanelDistanceMeters)
+                val carryPosition =
+                    Vector3(
+                        device.translation.x + ahead.x,
+                        device.translation.y + ahead.y,
+                        device.translation.z + ahead.z,
+                    )
+                carryPanel.setPose(Pose(carryPosition, device.rotation), Space.REAL_WORLD)
+                for (marker in markersByObjectId.values) marker.faceToward(device.translation)
+            }
+        }
+        } catch (e: Throwable) {
+            android.util.Log.d("ElonnField", "carry effect STOPPED by ${e.javaClass.name}: ${e.message}")
+            throw e
+        } finally {
+            android.util.Log.d("ElonnField", "carry effect ENDED instance=$instanceId session=${System.identityHashCode(currentSession)}")
+        }
+    }
+
     Box(modifier = modifier) {
         when {
             error != null -> Text(error ?: "", modifier = Modifier.padding(16.dp))
@@ -189,7 +295,62 @@ fun ArCoreField(
  */
 private const val FieldPresentationRadiusMeters = 3.0f
 
-private class PlacedMarker(private val anchor: Anchor, private val panel: PanelEntity) {
+/**
+ * Distance of Carry's head-locked main panel from the viewer, in meters. A presentation choice
+ * for the first implementation, fixed until a member-facing control exists.
+ */
+private const val CarryPanelDistanceMeters = 1.2f
+
+/** Size of Carry's own panel. The Activity main panel is system-sized and cannot hold Carry. */
+private val CarryPanelSizeMeters = FloatSize2d(2.4f, 1.35f)
+
+/**
+ * Physical size of each Field marker panel, in meters. The marker's text is laid out in density
+ * units, so a fixed physical panel makes that text's apparent size depend on the layout's pixel
+ * count. At the 3 m radius, 0.8 m × 0.43 m (about 15° × 8° of view) keeps the title and distance
+ * legible while leaving the marker clear of the centre of view.
+ */
+private val FieldMarkerSizeMeters = FloatSize2d(0.8f, 0.43f)
+
+/**
+ * Unit horizontal direction the device faces, as (x, z). Straight up or down there is no
+ * horizontal facing, so the fallback is -Z, the default forward.
+ */
+private fun horizontalForward(forward: Vector3): Pair<Float, Float> {
+    val length = sqrt(forward.x * forward.x + forward.z * forward.z)
+    return if (length < 1e-4f) 0f to -1f else (forward.x / length) to (forward.z / length)
+}
+
+/**
+ * Elevation, in radians, of a place on the Earth's surface seen from sea level at a great-circle
+ * distance, on a spherical Earth. Negative means below the horizon. The member's eye height is
+ * negligible at this scale and is treated as zero.
+ */
+private fun earthElevationRadians(distanceMeters: Double): Double {
+    val radius = Geo.EARTH_RADIUS_METERS
+    val centralAngle = distanceMeters / radius
+    return atan2(radius * cos(centralAngle) - radius, radius * sin(centralAngle))
+}
+
+/**
+ * One Field marker. Its position is fixed in the world by its anchor. Its orientation is not: it
+ * is re-aimed at the member every frame, so the marker reads as a sign on the horizon that the
+ * member moves around, not as a panel attached to the view (Carry does that; Field does not).
+ */
+private class PlacedMarker(
+    private val anchor: Anchor,
+    private val panel: PanelEntity,
+    private val anchorPosition: Vector3,
+) {
+    fun faceToward(devicePosition: Vector3) {
+        val toX = devicePosition.x - anchorPosition.x
+        val toY = devicePosition.y - anchorPosition.y
+        val toZ = devicePosition.z - anchorPosition.z
+        val yaw = Math.toDegrees(atan2(toX.toDouble(), toZ.toDouble())).toFloat()
+        val pitch = Math.toDegrees(-atan2(toY.toDouble(), sqrt((toX * toX + toZ * toZ).toDouble()))).toFloat()
+        panel.setPose(Pose(Vector3(0f, 0f, 0f), Quaternion.fromEulerAngles(pitch, yaw, 0f)))
+    }
+
     fun dispose() {
         // Entity.dispose() is deprecated -- entities are reclaimed automatically once detached
         // from the scene graph via parent = null, confirmed via a real compiler warning.
@@ -227,6 +388,7 @@ private suspend fun placeMarker(
         try {
             val devicePose = ArDevice.getInstance(session).state.value.devicePose
             val forward = devicePose.rotation * Vector3(0f, 0f, -1f)
+            val (forwardX, forwardZ) = horizontalForward(forward)
 
             val relativeRadians = Math.toRadians(bearingDegrees - headingDegrees)
             val cosA = cos(relativeRadians).toFloat()
@@ -236,21 +398,35 @@ private suspend fun placeMarker(
             // rotate forward's -Z component toward +X, not -X -- a naively-ported left-handed
             // rotation sign put a "15 right" test marker far to the left instead, caught live
             // on-device in the classic-ARCore renderer this replaces.
-            val rotatedX = forward.x * cosA - forward.z * sinA
-            val rotatedZ = forward.x * sinA + forward.z * cosA
+            val directionX = forwardX * cosA - forwardZ * sinA
+            val directionZ = forwardX * sinA + forwardZ * cosA
 
-            // Geographic distance is data; the radial position is presentation. Direction stays
-            // true to the member's bearing, but the marker sits at a fixed comfortable radius so
-            // distant objects (1,000+ km) remain visible in Field instead of landing far beyond
-            // the view. The true distance still reaches markerContent via distanceMeters.
-            val distance = FieldPresentationRadiusMeters
+            // True geography sets the direction. The member's bearing gives the horizontal
+            // heading; the Earth's curvature for the real great-circle distance gives the
+            // elevation, so a distant place sits below the horizon as it would in the world.
+            // Geographic distance stays data: the marker sits at a fixed presentation radius, and
+            // the real distance still reaches markerContent via distanceMeters.
+            val elevation = earthElevationRadians(distanceMeters)
+            val radius = FieldPresentationRadiusMeters
+            val horizontalScale = (cos(elevation) * radius).toFloat()
             val anchorPosition =
                 Vector3(
-                    devicePose.translation.x + rotatedX * distance,
-                    devicePose.translation.y,
-                    devicePose.translation.z + rotatedZ * distance,
+                    devicePose.translation.x + directionX * horizontalScale,
+                    devicePose.translation.y + (sin(elevation) * radius).toFloat(),
+                    devicePose.translation.z + directionZ * horizontalScale,
                 )
             val anchorPose = Pose(anchorPosition, Quaternion.fromEulerAngles(0f, 0f, 0f))
+
+            // The panel faces the member: its front turns toward the device's position.
+            val toMemberX = devicePose.translation.x - anchorPosition.x
+            val toMemberY = devicePose.translation.y - anchorPosition.y
+            val toMemberZ = devicePose.translation.z - anchorPosition.z
+            val facing =
+                Quaternion.fromEulerAngles(
+                    pitch = Math.toDegrees(-atan2(toMemberY.toDouble(), sqrt((toMemberX * toMemberX + toMemberZ * toMemberZ).toDouble()))).toFloat(),
+                    yaw = Math.toDegrees(atan2(toMemberX.toDouble(), toMemberZ.toDouble())).toFloat(),
+                    roll = 0f,
+                )
 
             // Anchor.create returns a sealed AnchorResult (AnchorCreateSuccess /
             // AnchorCreateResourcesExhausted / AnchorCreateTrackingUnavailable) for some failure
@@ -274,18 +450,25 @@ private suspend fun placeMarker(
                             setViewTreeViewModelStoreOwner(activity)
                             setViewTreeSavedStateRegistryOwner(activity)
                             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-                            setContent { markerContent(obj, distanceMeters, Modifier) }
+                            // This panel is hosted outside the Activity's theme, so it must apply
+                            // ElonnTheme itself. Without it the marker falls back to the default
+                            // light Material scheme: a white box with dark text.
+                            setContent {
+                                ElonnTheme {
+                                    markerContent(obj, distanceMeters, Modifier.fillMaxSize())
+                                }
+                            }
                         }
                     val panel =
                         PanelEntity.create(
-                            session = session,
-                            view = composeView,
-                            pixelDimensions = IntSize2d(300, 160),
-                            name = "field-marker-${obj.id}",
-                            pose = Pose(Vector3(0f, 0f, 0f), Quaternion.fromEulerAngles(0f, 0f, 0f)),
-                            parent = anchorSpace,
+                            session,
+                            composeView,
+                            FieldMarkerSizeMeters,
+                            "field-marker-${obj.id}",
+                            Pose(Vector3(0f, 0f, 0f), facing),
+                            anchorSpace,
                         )
-                    return PlacedMarker(anchor, panel)
+                    return PlacedMarker(anchor, panel, anchorPosition)
                 }
                 else -> {
                     android.util.Log.d("ElonnField", "Anchor.create non-success for ${obj.id} attempt $attempts: $result")

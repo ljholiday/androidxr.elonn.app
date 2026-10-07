@@ -81,7 +81,7 @@ class WorldClient(
                         put("field_markers", true)
                         put("pointer_input", true)
                         put("stereo_rendering", false)
-                        put("headset_mode", false)
+                        put("headset_mode", renderer == "headset")
                         put("spatial_ui", false)
                         put("hand_input", false)
                     })

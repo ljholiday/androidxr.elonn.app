@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
@@ -100,7 +101,13 @@ class MainActivity : ComponentActivity() {
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
         setContent {
             ElonnTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
+                // Transparent so the world shows through. contentColor is set explicitly: a
+                // transparent Surface otherwise resets it, and all text falls back to black.
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) {
                     ElonnApp()
                 }
             }
@@ -197,6 +204,7 @@ private fun ElonnApp() {
         loadLoginForm()
     }
 
+    SideEffect { android.util.Log.d("ElonnField", "screen=${screen::class.simpleName} at ${System.currentTimeMillis() % 100000}") }
     when (val current = screen) {
         is Screen.Loading -> LoadingView()
         // xreal.elonn.app's PhoneRenderer.RenderStatus: Refresh is the retry
@@ -443,16 +451,6 @@ private fun FieldView(
     onSubmitFind: (String) -> Unit,
     onClearResults: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val panelStore = remember { PanelStore(context) }
-    // Camera background is full-bleed, behind the status/navigation bars
-    // (edge-to-edge, per MainActivity's setDecorFitsSystemWindows(false));
-    // windows measure/clamp against the safe-drawing area instead, one inset
-    // in from that, so Entry/Carry windows never default or drag under a
-    // system bar. Two different bounds, deliberately.
-    var boundsPx by remember { mutableStateOf(IntSize.Zero) }
-
-    val carryObjects = state.carry.objectIds.mapNotNull { state.objectsById[it] }
     // A Field Placement can name an Object directly, or a Collection
     // (e.g. maps.field's real markers live inside collection:maps:maps.field,
     // not as individual Placements) -- mirrors xreal.elonn.app's
@@ -461,8 +459,6 @@ private fun FieldView(
         state.field.objectIds +
             state.field.collectionIds.flatMap { state.collectionsById[it]?.itemIds.orEmpty() }
         ).distinct().mapNotNull { state.objectsById[it] }
-    val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
-
     val markerContent: @Composable (WorldObject, Double, Modifier) -> Unit = { obj, distanceMeters, markerModifier ->
         FieldMarker(
             obj = obj,
@@ -473,14 +469,29 @@ private fun FieldView(
         )
     }
 
+    val carry = CarryInputs(
+        state = state,
+        isBusy = isBusy,
+        searchCompletedCount = searchCompletedCount,
+        onSelect = onSelect,
+        onDispatch = onDispatch,
+        onClose = onClose,
+        onBack = onBack,
+        onSubmitFind = onSubmitFind,
+        onClearResults = onClearResults,
+    )
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // Headset: real Jetpack XR markers through SceneCore. Phone: classic ARCore camera
-        // passthrough. Both render the same markers through the same markerContent.
+        // Headset: real Jetpack XR markers through SceneCore, with Carry in its own head-locked
+        // panel. Phone: classic ARCore camera passthrough, with Carry inline. Both render the same
+        // markers through markerContent and the same Carry content through CarryLayer.
         if (usesSpatialFieldPresentation(LocalContext.current)) {
             ArCoreField(
                 fieldObjects = fieldObjects,
                 modifier = Modifier.fillMaxSize(),
                 markerContent = markerContent,
+                carry = carry,
+                carryContent = { CarryLayer(it) },
             )
         } else {
             ClassicArCoreField(
@@ -488,73 +499,110 @@ private fun FieldView(
                 modifier = Modifier.fillMaxSize(),
                 markerContent = markerContent,
             )
+            CarryLayer(carry)
         }
+    }
+}
 
-        // Entry and every Carry window live in the safe-drawing area, not
-        // the true full-screen bounds above -- otherwise a window's default
-        // position, or a drag/resize clamp, could land it under the status
-        // or navigation bar where it's unreachable.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .onSizeChanged { boundsPx = it },
-        ) {
-            if (boundsPx != IntSize.Zero) {
-                EntryResultsWindow(
-                    panelStore = panelStore,
-                    boundsPx = boundsPx,
-                    findingObjects = findingObjects,
-                    state = state,
-                    isBusy = isBusy,
-                    searchCompletedCount = searchCompletedCount,
-                    onSelect = onSelect,
-                    onSubmitFind = onSubmitFind,
-                    onClearResults = onClearResults,
-                )
+/**
+ * Everything the Carry layer renders, passed as one value. The headset hosts Carry in a separate
+ * panel, so its content must observe these inputs as they change rather than capture a snapshot.
+ */
+internal data class CarryInputs(
+    val state: RuntimeState,
+    val isBusy: Boolean,
+    val searchCompletedCount: Int,
+    val onSelect: (String) -> Unit,
+    val onDispatch: (String, JSONObject) -> Unit,
+    val onClose: (String) -> Unit,
+    val onBack: (String) -> Unit,
+    val onSubmitFind: (String) -> Unit,
+    val onClearResults: () -> Unit,
+)
 
-                carryObjects.forEachIndexed { index, obj ->
-                    key(obj.id) {
-                        FloatingWindow(
-                            panelId = obj.id,
-                            store = panelStore,
-                            boundsPx = boundsPx,
-                            defaultX = 24.dp + (index * 18).dp,
-                            defaultY = 320.dp + (index * 18).dp,
-                            defaultWidth = 300.dp,
-                            defaultHeight = 220.dp,
-                            closable = true,
-                            onClosed = { onClose(obj.id) },
-                            canGoBack = state.navigationById[obj.id]?.hasHistory == true,
-                            onBack = { onBack(obj.id) },
-                            header = { _, _ ->
-                                Text(
-                                    state.carryTitle(obj),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            },
-                            body = {
-                                // This window's own scrolling (FloatingWindow's body
-                                // doc): plain stacked content, so verticalScroll, not a
-                                // list -- e.g. the account Dashboard's stack of forms is
-                                // taller than the window's fixed height.
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .verticalScroll(rememberScrollState()),
-                                ) {
-                                    if (obj.summary.isNotBlank()) {
-                                        Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    ResourceLines(obj, state)
-                                    ActionLines(obj, state, onDispatch)
+/**
+ * The Carry layer: Entry with its Results pane, and every Carry window. Presentation-agnostic:
+ * the headset hosts it in a head-locked panel, the phone shows it inline.
+ */
+@Composable
+internal fun CarryLayer(inputs: CarryInputs) {
+    val state = inputs.state
+    val context = LocalContext.current
+    val panelStore = remember { PanelStore(context) }
+    // Camera background is full-bleed, behind the status/navigation bars
+    // (edge-to-edge, per MainActivity's setDecorFitsSystemWindows(false));
+    // windows measure/clamp against the safe-drawing area instead, one inset
+    // in from that, so Entry/Carry windows never default or drag under a
+    // system bar. Two different bounds, deliberately.
+    var boundsPx by remember { mutableStateOf(IntSize.Zero) }
+
+    val carryObjects = state.carry.objectIds.mapNotNull { state.objectsById[it] }
+    val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
+
+    // Entry and every Carry window live in the safe-drawing area, not
+    // the true full-screen bounds above -- otherwise a window's default
+    // position, or a drag/resize clamp, could land it under the status
+    // or navigation bar where it's unreachable.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .onSizeChanged { boundsPx = it },
+    ) {
+        if (boundsPx != IntSize.Zero) {
+            EntryResultsWindow(
+                panelStore = panelStore,
+                boundsPx = boundsPx,
+                findingObjects = findingObjects,
+                state = state,
+                isBusy = inputs.isBusy,
+                searchCompletedCount = inputs.searchCompletedCount,
+                onSelect = inputs.onSelect,
+                onSubmitFind = inputs.onSubmitFind,
+                onClearResults = inputs.onClearResults,
+            )
+
+            carryObjects.forEachIndexed { index, obj ->
+                key(obj.id) {
+                    FloatingWindow(
+                        panelId = obj.id,
+                        store = panelStore,
+                        boundsPx = boundsPx,
+                        defaultX = 24.dp + (index * 18).dp,
+                        defaultY = 320.dp + (index * 18).dp,
+                        defaultWidth = 300.dp,
+                        defaultHeight = 220.dp,
+                        closable = true,
+                        onClosed = { inputs.onClose(obj.id) },
+                        canGoBack = state.navigationById[obj.id]?.hasHistory == true,
+                        onBack = { inputs.onBack(obj.id) },
+                        header = { _, _ ->
+                            Text(
+                                state.carryTitle(obj),
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        },
+                        body = {
+                            // This window's own scrolling (FloatingWindow's body
+                            // doc): plain stacked content, so verticalScroll, not a
+                            // list -- e.g. the account Dashboard's stack of forms is
+                            // taller than the window's fixed height.
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                if (obj.summary.isNotBlank()) {
+                                    Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
                                 }
-                            },
-                        )
-                    }
+                                ResourceLines(obj, state)
+                                ActionLines(obj, state, inputs.onDispatch)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -676,8 +724,9 @@ private fun FieldMarker(
             .clickable { onSelect(obj.id) }
             .padding(ElonnSpacing.xs),
     ) {
-        Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.labelMedium)
-        Text("${distanceMeters.toInt()}m away", style = MaterialTheme.typography.labelSmall)
+        // Field markers are read at a distance inside a headset, so they use body-scale type.
+        Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleLarge, color = Color.White)
+        Text("${distanceMeters.toInt()}m away", style = MaterialTheme.typography.bodyLarge, color = Color.White)
     }
 }
 
