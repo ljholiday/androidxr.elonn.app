@@ -137,7 +137,6 @@ internal fun ArCoreField(
             // PROPERTY_XR_ACTIVITY_START_MODE=XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED
             // (AndroidManifest.xml) to be allowed to call this itself.
             created.scene.requestFullSpace()
-            android.util.Log.d("ElonnField", "requestFullSpace sent session=${System.identityHashCode(created)}")
             session = created
         }
     }
@@ -150,15 +149,8 @@ internal fun ArCoreField(
     val carryState = remember { mutableStateOf(carry) }
     SideEffect { carryState.value = carry }
     val carryPanelRef = remember { mutableStateOf<PanelEntity?>(null) }
-    val passCounter = remember { intArrayOf(0) }
-    passCounter[0]++
-    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=A(before-disposable) permission=$permissionGranted")
-    val instanceId = remember { System.identityHashCode(Any()) }
-    android.util.Log.d("ElonnField", "ArCoreField composed instance=$instanceId session=${System.identityHashCode(session)}")
     DisposableEffect(Unit) {
-        android.util.Log.d("ElonnField", "ArCoreField disposable-enter instance=$instanceId")
         onDispose {
-            android.util.Log.d("ElonnField", "ArCoreField onDispose instance=$instanceId panel=${System.identityHashCode(carryPanelRef.value)}")
             carryPanelRef.value?.parent = null
         }
     }
@@ -166,7 +158,6 @@ internal fun ArCoreField(
     // The only place GPS/compass math runs: whenever the Field object set or the member's
     // location changes, reconcile which objects have a real Anchor+panel yet. Existing markers
     // are left completely untouched -- their pose is the Anchor's own tracked pose from here on.
-    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=B(before-reconcile) session=${System.identityHashCode(session)}")
     LaunchedEffect(session, fieldObjects, location?.latitude, location?.longitude) {
         val currentSession = session ?: return@LaunchedEffect
         val fix = location ?: return@LaunchedEffect
@@ -207,17 +198,13 @@ internal fun ArCoreField(
     // so it is not clipped by the system-sized Activity main panel. Each frame its pose is the
     // head-lock calculation: a point a fixed distance ahead of the device, with the device's
     // rotation. Field markers stay where their anchors put them and turn toward the member.
-    android.util.Log.d("ElonnField", "PASS ${passCounter[0]} point=C(before-carry) session=${System.identityHashCode(session)}")
     LaunchedEffect(session) {
         val currentSession = session ?: return@LaunchedEffect
-        android.util.Log.d("ElonnField", "carry effect start instance=$instanceId session=${System.identityHashCode(currentSession)}")
-        try {
         // Detach any Carry panel from an earlier run first. This effect can run more than once for
         // the same session, and each run would otherwise leave a second Carry panel in the scene.
         // At most one Carry host per session. Remove the existing host explicitly before replacing it.
         carryPanelRef.value?.let { previous ->
             previous.parent = null
-            android.util.Log.d("ElonnField", "carry host REMOVED id=${System.identityHashCode(previous)} before replacement")
         }
         val carryView =
             ComposeView(activity).apply {
@@ -235,7 +222,6 @@ internal fun ArCoreField(
                             contentColor = MaterialTheme.colorScheme.onSurface,
                         ) {
                             carryState.value?.let {
-                                android.util.Log.d("ElonnField", "carry-content composed view=${System.identityHashCode(this@apply)} windowsState=${it.state.carry.objectIds}")
                                 carryContent(it)
                             }
                         }
@@ -254,8 +240,6 @@ internal fun ArCoreField(
                 currentSession.scene.activitySpace,
             )
         carryPanelRef.value = carryPanel
-        android.util.Log.d("ElonnField", "carry host LIVE id=${System.identityHashCode(carryPanel)}")
-        android.util.Log.d("ElonnField", "carry-panel CREATED id=${System.identityHashCode(carryPanel)} size=${carryPanel.size} pixels=${carryPanel.sizeInPixels}")
         // Stops once a newer run has replaced this panel, so only the current panel is moved.
         while (carryPanelRef.value === carryPanel) {
             withFrameNanos {
@@ -270,12 +254,6 @@ internal fun ArCoreField(
                 carryPanel.setPose(Pose(carryPosition, device.rotation), Space.REAL_WORLD)
                 for (marker in markersByObjectId.values) marker.faceToward(device.translation)
             }
-        }
-        } catch (e: Throwable) {
-            android.util.Log.d("ElonnField", "carry effect STOPPED by ${e.javaClass.name}: ${e.message}")
-            throw e
-        } finally {
-            android.util.Log.d("ElonnField", "carry effect ENDED instance=$instanceId session=${System.identityHashCode(currentSession)}")
         }
     }
 
