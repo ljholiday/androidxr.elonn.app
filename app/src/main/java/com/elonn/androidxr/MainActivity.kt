@@ -62,6 +62,7 @@ import com.elonn.androidxr.core.WorldAuthRequiredException
 import com.elonn.androidxr.core.WorldCallRequest
 import com.elonn.androidxr.core.WorldClient
 import com.elonn.androidxr.core.WorldObject
+import com.elonn.androidxr.core.WorldResource
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -722,6 +723,25 @@ private fun FieldMarker(
     }
 }
 
+/** resource.md: an external-reference Resource's own label, or its domain when it has none --
+ * never prefixed ("Source: ..."); the reference reads on its own, the same text wherever a
+ * Runtime shows it (the Results-pane row below, or ResourceLines' detail view). */
+private fun externalReferenceText(resource: WorldResource): String =
+    resource.label.ifBlank { domainOf(resource.source) }
+
+/** The first external-reference Resource's text, for a compact single-line summary (e.g. a
+ * Results-pane row) -- mirrors web.elonn.local's cardLinks(), which likewise shows only the
+ * first Resource with a source, not every one. */
+private fun firstExternalReferenceText(obj: WorldObject, state: RuntimeState): String? {
+    for (resourceId in obj.resourceIds) {
+        val resource = state.resourcesById[resourceId] ?: continue
+        if (resource.isExternalReference) {
+            return externalReferenceText(resource)
+        }
+    }
+    return null
+}
+
 /** resource.md: a real embed loads; anything else is reference text only, never opened. */
 @Composable
 private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
@@ -739,7 +759,7 @@ private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
                 update = { view -> if (view.url != resource.source) view.loadUrl(resource.source) },
             )
             resource.isExternalReference -> Text(
-                resource.label.ifBlank { domainOf(resource.source) },
+                externalReferenceText(resource),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
                 modifier = Modifier.padding(top = 4.dp),
@@ -829,6 +849,7 @@ private fun ObjectRow(
     onSelect: (String) -> Unit,
 ) {
     val selected = obj.id == state.selectedObjectId
+    val sourceText = firstExternalReferenceText(obj, state)
 
     Column(
         modifier = Modifier
@@ -847,5 +868,13 @@ private fun ObjectRow(
     ) {
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
         Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (sourceText != null) {
+            Text(
+                sourceText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
