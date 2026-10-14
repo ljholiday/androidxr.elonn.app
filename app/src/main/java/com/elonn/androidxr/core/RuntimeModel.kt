@@ -120,6 +120,7 @@ data class DatasetStatus(val severity: String, val message: String)
 
 data class RuntimeState(
     val datasetId: String,
+    val threadId: String,
     val objectsById: Map<String, WorldObject>,
     val collectionsById: Map<String, WorldCollection>,
     val actionsById: Map<String, RuntimeAction>,
@@ -138,6 +139,7 @@ data class RuntimeState(
     companion object {
         val Empty = RuntimeState(
             datasetId = "",
+            threadId = "",
             objectsById = emptyMap(),
             collectionsById = emptyMap(),
             actionsById = emptyMap(),
@@ -176,9 +178,14 @@ object RuntimeInterpreter {
             .takeIf { objectsById.containsKey(it) } ?: ""
         val navigationById = readNavigation(context?.optJSONObject("objects"))
         val status = readStatus(context?.optJSONObject("status"))
+        // context.thread_id (dev.elonn canonical/thread.md, world.elonn's WorldService::withThreadId):
+        // always present on a response -- the id to continue, or "" when world.clear ended the
+        // Thread. Never fabricated client-side; just echoed back verbatim on the next Call.
+        val threadId = context?.optString("thread_id").orEmpty()
 
         return RuntimeState(
             datasetId = dataset.optString("id"),
+            threadId = threadId,
             objectsById = objectsById,
             collectionsById = collectionsById,
             actionsById = actionsById,

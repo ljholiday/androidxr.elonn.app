@@ -153,10 +153,10 @@ private fun ElonnApp() {
         }
     }
 
-    suspend fun performCall(currentToken: String, datasetId: String?, request: WorldCallRequest) {
+    suspend fun performCall(currentToken: String, datasetId: String?, threadId: String?, request: WorldCallRequest) {
         isBusy = true
         try {
-            val dataset = world.call(currentToken, datasetId, request)
+            val dataset = world.call(currentToken, datasetId, threadId, request)
             val state = RuntimeInterpreter.apply(dataset)
             screen = Screen.Field(state)
         } catch (e: WorldAuthRequiredException) {
@@ -171,7 +171,7 @@ private fun ElonnApp() {
     }
 
     suspend fun restoreField(currentToken: String) {
-        performCall(currentToken, datasetId = null, WorldCallRequest(operation = "world.restore"))
+        performCall(currentToken, datasetId = null, threadId = null, WorldCallRequest(operation = "world.restore"))
     }
 
     LaunchedEffect(Unit) {
@@ -244,6 +244,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(
                             operation = "world.focus",
                             inputText = "world.focus",
@@ -259,6 +260,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(
                             operation = "world.compose",
                             inputText = label,
@@ -273,6 +275,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(operation = "world.close", inputText = "world.close", originObject = objectId),
                     )
                 }
@@ -283,6 +286,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(operation = "world.back", inputText = "world.back", originObject = objectId),
                     )
                 }
@@ -293,6 +297,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(operation = "world.compose", inputText = query),
                     )
                     searchCompletedCount++
@@ -304,6 +309,7 @@ private fun ElonnApp() {
                     performCall(
                         currentToken,
                         current.state.datasetId,
+                        current.state.threadId,
                         WorldCallRequest(operation = "world.clear", inputText = "world.clear"),
                     )
                 }
@@ -796,9 +802,14 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
 
 /**
  * The same generic argument-schema rendering LoginView uses, for an ordinary
- * Object Action instead of identity.login -- web.elonn.local's operationForm
- * builds the same way: base invocation minus `arguments`, filled values
- * merged back in on submit.
+ * Object Action instead of identity.login -- web.elonn.local's operationForm /
+ * submitOperationForm build the same way: `arguments` is only the field-spec
+ * map used to render inputs, never resubmitted. Conductor's explicit-invocation
+ * path (ServicePlanner::operationAndArguments) reads supplied values exclusively
+ * from `operation_invocation.payload`, so a filled value must be merged into
+ * `payload` -- any fields already there (e.g. conductor.clarify's own
+ * original_call/clarification_round) have to survive alongside it, not be
+ * dropped, and `arguments` must not be resubmitted at all.
  */
 @Composable
 private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -> Unit) {
@@ -821,9 +832,13 @@ private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -
             )
         }
         TextButton(onClick = {
-            val filledArguments = JSONObject()
-            for (key in keys) filledArguments.put(key, fieldValues.getValue(key).value)
-            val filledInvocation = JSONObject(invocation.toString()).apply { put("arguments", filledArguments) }
+            val existingPayload = invocation.optJSONObject("payload")
+            val payload = if (existingPayload != null) JSONObject(existingPayload.toString()) else JSONObject()
+            for (key in keys) payload.put(key, fieldValues.getValue(key).value)
+            val filledInvocation = JSONObject(invocation.toString()).apply {
+                remove("arguments")
+                put("payload", payload)
+            }
             onDispatch(action.label, filledInvocation)
         }) { Text("Submit") }
     }

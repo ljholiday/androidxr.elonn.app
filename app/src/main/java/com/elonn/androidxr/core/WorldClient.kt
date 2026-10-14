@@ -52,7 +52,7 @@ class WorldClient(
             .build(),
 ) {
 
-    suspend fun call(token: String, datasetId: String?, request: WorldCallRequest): JSONObject {
+    suspend fun call(token: String, datasetId: String?, threadId: String?, request: WorldCallRequest): JSONObject {
         val envelope = JSONObject().apply {
             put("id", "call:runtime:${RuntimeConfig.RUNTIME_ID}:${System.currentTimeMillis()}")
             put("content", JSONObject().apply {
@@ -98,6 +98,13 @@ class WorldClient(
                         put("object_id", request.selectedObjectId)
                     }
                 })
+                // Carries the Thread this Call continues (dev.elonn canonical/thread.md,
+                // web.elonn.local's world-client.js parity). Omitted entirely (never sent as "")
+                // when the Runtime has none yet -- a Call with no thread_id always starts a new,
+                // independent Thread; this client must never fabricate or guess one.
+                if (!threadId.isNullOrBlank()) {
+                    put("thread_id", threadId)
+                }
             })
         }
 
