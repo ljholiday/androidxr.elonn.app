@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -41,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
@@ -53,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
+import com.elonn.androidxr.core.FindingEntry
 import com.elonn.androidxr.core.PanelStore
 import com.elonn.androidxr.core.RuntimeAction
 import com.elonn.androidxr.core.RuntimeInterpreter
@@ -61,6 +64,7 @@ import com.elonn.androidxr.core.TokenStore
 import com.elonn.androidxr.core.WorldAuthRequiredException
 import com.elonn.androidxr.core.WorldCallRequest
 import com.elonn.androidxr.core.WorldClient
+import com.elonn.androidxr.core.WorldCollection
 import com.elonn.androidxr.core.WorldObject
 import com.elonn.androidxr.core.WorldResource
 import kotlinx.coroutines.launch
@@ -134,14 +138,16 @@ private fun ElonnApp() {
 
     var screen by remember { mutableStateOf<Screen>(Screen.Loading) }
     var token by remember { mutableStateOf<String?>(null) }
-    // A World Call is in flight -- surfaced in Entry's header (a small spinner next to Go) so
-    // tapping Go gives some immediate sign something is happening, not just a silent wait for the
-    // next Dataset to arrive.
+    // A World Call is in flight -- surfaced next to Go (a small spinner) so tapping Go gives some
+    // immediate sign something is happening, not just a silent wait for the next Dataset to
+    // arrive.
     var isBusy by remember { mutableStateOf(false) }
-    // Bumped once a world.compose search Call completes (success or failure) -- EntryResultsWindow
-    // uses a change in this to force the Results pane open, so a fresh search (or its error) is
-    // never left hidden behind an already-collapsed pane.
-    var searchCompletedCount by remember { mutableStateOf(0) }
+    // Bumped once a world.compose search Call completes (success or failure) or a world.clear
+    // completes -- EntryResultsWindow uses a change in this to force the Results pane open, so a
+    // fresh search (or its error), or an explicit Clear, is never left hidden behind an
+    // already-collapsed pane (web.elonn.local's clearResults() does the same: `panel.collapsed =
+    // false`).
+    var resultsPaneChangedCount by remember { mutableStateOf(0) }
 
     suspend fun loadLoginForm() {
         try {
@@ -237,7 +243,7 @@ private fun ElonnApp() {
         is Screen.Field -> FieldView(
             state = current.state,
             isBusy = isBusy,
-            searchCompletedCount = searchCompletedCount,
+            resultsPaneChangedCount = resultsPaneChangedCount,
             onSelect = { objectId ->
                 val currentToken = token ?: return@FieldView
                 scope.launch {
@@ -294,13 +300,30 @@ private fun ElonnApp() {
             onSubmitFind = { query ->
                 val currentToken = token ?: return@FieldView
                 scope.launch {
+                    // No current.state.threadId here (real bug, root-caused and fixed the same
+                    // way in web.elonn.local's submitQuery(): opening a Discovery thread set a
+                    // "current" thread id that every later, unrelated Entry search then silently
+                    // kept continuing, with no way to tell). Omitting thread_id always starts a
+                    // fresh, independent Thread -- continuing a specific Thread has its own path
+                    // (onContinueThread below).
                     performCall(
                         currentToken,
                         current.state.datasetId,
-                        current.state.threadId,
+                        threadId = null,
                         WorldCallRequest(operation = "world.compose", inputText = query),
                     )
-                    searchCompletedCount++
+                    resultsPaneChangedCount++
+                }
+            },
+            onContinueThread = { threadId, query ->
+                val currentToken = token ?: return@FieldView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        threadId,
+                        WorldCallRequest(operation = "world.compose", inputText = query),
+                    )
                 }
             },
             onClearResults = {
@@ -312,6 +335,7 @@ private fun ElonnApp() {
                         current.state.threadId,
                         WorldCallRequest(operation = "world.clear", inputText = "world.clear"),
                     )
+                    resultsPaneChangedCount++
                 }
             },
         )
@@ -368,7 +392,10 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
     val label = action.getJSONObject("content").optString("label", "Log in")
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("Elonn", style = MaterialTheme.typography.headlineMedium)
@@ -442,12 +469,13 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
 private fun FieldView(
     state: RuntimeState,
     isBusy: Boolean,
-    searchCompletedCount: Int,
+    resultsPaneChangedCount: Int,
     onSelect: (String) -> Unit,
     onDispatch: (String, JSONObject) -> Unit,
     onClose: (String) -> Unit,
     onBack: (String) -> Unit,
     onSubmitFind: (String) -> Unit,
+    onContinueThread: (String, String) -> Unit,
     onClearResults: () -> Unit,
 ) {
     // A Field Placement can name an Object directly, or a Collection
@@ -471,12 +499,13 @@ private fun FieldView(
     val carry = CarryInputs(
         state = state,
         isBusy = isBusy,
-        searchCompletedCount = searchCompletedCount,
+        resultsPaneChangedCount = resultsPaneChangedCount,
         onSelect = onSelect,
         onDispatch = onDispatch,
         onClose = onClose,
         onBack = onBack,
         onSubmitFind = onSubmitFind,
+        onContinueThread = onContinueThread,
         onClearResults = onClearResults,
     )
 
@@ -510,12 +539,13 @@ private fun FieldView(
 internal data class CarryInputs(
     val state: RuntimeState,
     val isBusy: Boolean,
-    val searchCompletedCount: Int,
+    val resultsPaneChangedCount: Int,
     val onSelect: (String) -> Unit,
     val onDispatch: (String, JSONObject) -> Unit,
     val onClose: (String) -> Unit,
     val onBack: (String) -> Unit,
     val onSubmitFind: (String) -> Unit,
+    val onContinueThread: (String, String) -> Unit,
     val onClearResults: () -> Unit,
 )
 
@@ -536,7 +566,6 @@ internal fun CarryLayer(inputs: CarryInputs) {
     var boundsPx by remember { mutableStateOf(IntSize.Zero) }
 
     val carryObjects = state.carry.objectIds.mapNotNull { state.objectsById[it] }
-    val findingObjects = state.findings.filter { it.kind == "object" }.mapNotNull { state.objectsById[it.id] }
 
     // Entry and every Carry window live in the safe-drawing area, not
     // the true full-screen bounds above -- otherwise a window's default
@@ -552,10 +581,10 @@ internal fun CarryLayer(inputs: CarryInputs) {
             EntryResultsWindow(
                 panelStore = panelStore,
                 boundsPx = boundsPx,
-                findingObjects = findingObjects,
+                findings = state.findings,
                 state = state,
                 isBusy = inputs.isBusy,
-                searchCompletedCount = inputs.searchCompletedCount,
+                resultsPaneChangedCount = inputs.resultsPaneChangedCount,
                 onSelect = inputs.onSelect,
                 onSubmitFind = inputs.onSubmitFind,
                 onClearResults = inputs.onClearResults,
@@ -594,11 +623,16 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                     .fillMaxHeight()
                                     .verticalScroll(rememberScrollState()),
                             ) {
-                                if (obj.summary.isNotBlank()) {
-                                    Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
+                                if (obj.type == "world.thread") {
+                                    ThreadTurns(obj)
+                                    ThreadContinueForm(obj.discoveryThreadId, inputs.onContinueThread)
+                                } else {
+                                    if (obj.summary.isNotBlank()) {
+                                        Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    ResourceLines(obj, state)
+                                    ActionLines(obj, state, inputs.onDispatch)
                                 }
-                                ResourceLines(obj, state)
-                                ActionLines(obj, state, inputs.onDispatch)
                             }
                         },
                     )
@@ -609,25 +643,28 @@ internal fun CarryLayer(inputs: CarryInputs) {
 }
 
 /**
- * Entry and the Results pane as one window (layout.md, terminology/window.md):
- * Entry -- form field, submit, clear, show/hide (microphone omitted, this
- * Runtime has no voice input yet) -- is the window's header/topbar; the
- * Results pane (Findings) is its body. `closable = false`: this window must
- * always exist. Submitting dispatches world.compose with the typed text as
- * Call content (xreal.elonn.app's ElonnRuntimeApp.SubmitFind uses the same
- * contract). Clear dispatches world.clear, which empties the Results pane in
- * World's saved state, not just this screen. Collapsing (tap the header, or
- * the explicit show/hide button) is local-only and never touches World --
- * exactly layout.md's "does not hide Entry, no effect on Carry or Field."
+ * Entry and the Results pane as one window (layout.md, terminology/window.md).
+ * The header/topbar carries only the title, Clear, and show/hide -- Entry
+ * itself (form field, submit; microphone omitted, this Runtime has no voice
+ * input yet) sits at the bottom of the body, chat-input style, below the
+ * Results pane (Findings), matching web.elonn.local's Entry-at-bottom change
+ * (2026-10-14) -- a fresh result lands next to Entry at the end of the list,
+ * not up top out of view. `closable = false`: this window must always exist.
+ * Submitting dispatches world.compose with the typed text as Call content
+ * (xreal.elonn.app's ElonnRuntimeApp.SubmitFind uses the same contract).
+ * Clear dispatches world.clear, which empties the Results pane in World's
+ * saved state, not just this screen. Collapsing (tap the header, or the
+ * explicit show/hide button) is local-only and never touches World -- exactly
+ * layout.md's "does not hide Entry, no effect on Carry or Field."
  */
 @Composable
 private fun EntryResultsWindow(
     panelStore: PanelStore,
     boundsPx: IntSize,
-    findingObjects: List<WorldObject>,
+    findings: List<FindingEntry>,
     state: RuntimeState,
     isBusy: Boolean,
-    searchCompletedCount: Int,
+    resultsPaneChangedCount: Int,
     onSelect: (String) -> Unit,
     onSubmitFind: (String) -> Unit,
     onClearResults: () -> Unit,
@@ -646,22 +683,18 @@ private fun EntryResultsWindow(
         // A completed search should never sit hidden behind an already-collapsed pane -- expand
         // every time a world.compose search finishes (success or failure; a failure still has a
         // status message worth surfacing), never on some other unrelated recomposition.
-        expandOnChangeOf = if (searchCompletedCount > 0) searchCompletedCount else null,
+        expandOnChangeOf = if (resultsPaneChangedCount > 0) resultsPaneChangedCount else null,
         header = { collapsed, toggleCollapsed ->
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Find...") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            if (isBusy) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
-            }
-            if (findingObjects.isNotEmpty()) {
-                TextButton(onClick = onClearResults) { Text("Clear") }
+            Text("Find", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (findings.isNotEmpty()) {
+                // web.elonn.local's clearResults() resets the typed query alongside emptying the
+                // Results pane (queryInput.value = '') -- this button, unlike Go
+                // (constraint.androidxr_go_never_clears_query_20260927, which is specific to
+                // submitting a search), is expected to clear the box.
+                TextButton(onClick = {
+                    query = ""
+                    onClearResults()
+                }) { Text("Clear") }
             }
             TextButton(onClick = toggleCollapsed) { Text(if (collapsed) "Show" else "Hide") }
         },
@@ -678,16 +711,48 @@ private fun EntryResultsWindow(
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
             }
-            if (findingObjects.isEmpty()) {
-                Text("No results yet.", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(ElonnSpacing.xs),
-                ) {
-                    items(findingObjects) { obj ->
-                        ObjectRow(obj, state, onSelect)
+            // The Results list takes whatever space is left above Entry, which
+            // sits at the bottom of this window, chat-input style (matches
+            // web.elonn.local's Entry-at-bottom change, record
+            // next_step.androidxr_discovery_thread_rendering_plan_20261014c
+            // step 2) -- a fresh result appends at the end, next to where Entry
+            // already is, instead of up top out of view.
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (findings.isEmpty()) {
+                    Text("No results yet.", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(ElonnSpacing.xs),
+                    ) {
+                        // dataset.findings interleaves collection- and object-kind entries, oldest
+                        // first (web.elonn.local's findingsView) -- rendering object-kind only, as
+                        // this once did, silently drops every collection result (e.g. Maps'
+                        // maps.reverse answer to a Discovery-thread query like "where am I").
+                        items(findings) { entry ->
+                            when (entry.kind) {
+                                "object" -> state.objectsById[entry.id]?.let { ObjectRow(it, state, onSelect) }
+                                "collection" -> state.collectionsById[entry.id]?.let { CollectionFinding(it, state, onSelect) }
+                            }
+                        }
                     }
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = ElonnSpacing.xs),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Find...") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                if (isBusy) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp).padding(start = ElonnSpacing.xs), strokeWidth = 2.dp)
+                } else {
+                    TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
                 }
             }
         },
@@ -771,6 +836,66 @@ private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
+
+/**
+ * A Discovery thread's own Turns (dev.elonn canonical/thread.md): the
+ * member's own input for each Turn, oldest first, with any clarifying
+ * question Conductor asked for that Turn shown inline. Plain presentational
+ * content -- a past Turn is never itself opened or selected, unlike an
+ * ordinary Collection's member rows.
+ */
+@Composable
+private fun ThreadTurns(obj: WorldObject) {
+    Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.sm)) {
+        for (turn in obj.turns) {
+            Column {
+                Text(turn.input, style = MaterialTheme.typography.bodyMedium)
+                if (turn.clarifyingQuestion.isNotBlank()) {
+                    Text(
+                        turn.clarifyingQuestion,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The field at the bottom of an opened Discovery thread, to continue it --
+ * mirrors Entry's own field/Go, but dispatches onContinueThread naming this
+ * specific Thread's own id (threadId, read from the Object's own
+ * discoveryThreadId), never whatever Thread the main Entry currently has
+ * active (web.elonn.local's threadContinueFormNode()/continueDiscoveryThread()
+ * use the same, deliberately separate, path). Clears after sending, unlike
+ * Entry's own Go (constraint.androidxr_go_never_clears_query_20260927, which
+ * is specific to Entry's field) -- matches web's own continueDiscoveryThread()
+ * clearing its input after submit.
+ */
+@Composable
+private fun ThreadContinueForm(threadId: String, onContinueThread: (String, String) -> Unit) {
+    var reply by remember { mutableStateOf("") }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = ElonnSpacing.xs),
+    ) {
+        OutlinedTextField(
+            value = reply,
+            onValueChange = { reply = it },
+            placeholder = { Text("Continue...") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = {
+            if (reply.isNotBlank() && threadId.isNotBlank()) {
+                onContinueThread(threadId, reply)
+                reply = ""
+            }
+        }) { Text("Send") }
     }
 }
 
@@ -882,7 +1007,9 @@ private fun ObjectRow(
             .padding(vertical = ElonnSpacing.xs, horizontal = ElonnSpacing.sm),
     ) {
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
-        Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (obj.meta.isNotBlank()) {
+            Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
         if (sourceText != null) {
             Text(
                 sourceText,
@@ -890,6 +1017,38 @@ private fun ObjectRow(
                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
                 modifier = Modifier.padding(top = 2.dp),
             )
+        }
+    }
+}
+
+/**
+ * A collection-kind Finding (finding.md), e.g. Maps' results for a query -- a titled group of
+ * Object rows, not a single Object. Mirrors web.elonn.local's collectionNode(): title, summary
+ * (when there's content to summarize), then each contained Object as its own row.
+ */
+@Composable
+private fun CollectionFinding(
+    collection: WorldCollection,
+    state: RuntimeState,
+    onSelect: (String) -> Unit,
+) {
+    val items = collection.itemIds.mapNotNull { state.objectsById[it] }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = ElonnSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(ElonnSpacing.xs),
+    ) {
+        if (collection.title.isNotBlank()) {
+            Text(collection.title, style = MaterialTheme.typography.titleSmall)
+        }
+        if (collection.summary.isNotBlank() && items.isNotEmpty()) {
+            Text(collection.summary, style = MaterialTheme.typography.bodySmall)
+        }
+        if (items.isEmpty()) {
+            Text("No results.", style = MaterialTheme.typography.bodySmall)
+        } else {
+            items.forEach { obj -> ObjectRow(obj, state, onSelect) }
         }
     }
 }
