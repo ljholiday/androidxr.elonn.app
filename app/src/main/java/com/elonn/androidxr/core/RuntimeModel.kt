@@ -20,13 +20,13 @@ data class WorldObject(
     val resourceIds: List<String> = emptyList(),
     val actionIds: MutableList<String> = mutableListOf(),
     /**
-     * The real-world position this Object is placed at, read from its own `field` Placement's
+     * The real-world position this Object is placed at, read from its own `space` Placement's
      * content.position (dev.elonn canonical/placement.md, Space position) -- never from the
      * Object's own content. An Object's own descriptive geographic data, if it ever carries any,
      * and its Placement's position are different facts and are never collapsed into one field
      * (placement.md: "the two are different facts and are never collapsed into one field").
      * RuntimeInterpreter.apply() attaches this after placements are parsed; null for an Object
-     * with no `field` Placement, or one with no position.
+     * with no `space` Placement, or one with no position.
      */
     val location: Pair<Double, Double>? = null,
 ) {
@@ -134,20 +134,19 @@ data class WorldCollection(
     val itemIds: List<String>,
 )
 
+/** placement.md: "A Placement positions one Object, never a Collection" -- objectId only. */
 private data class WorldPlacement(
     val type: String,
     val objectId: String,
-    val collectionId: String,
     val position: Pair<Double, Double>?,
 )
 
 data class ZoneState(
     val objectIds: List<String> = emptyList(),
-    val collectionIds: List<String> = emptyList(),
     /** Object id -> (latitude, longitude), for every Object in this zone with a real position. */
     val positions: Map<String, Pair<Double, Double>> = emptyMap(),
 ) {
-    val isEmpty: Boolean get() = objectIds.isEmpty() && collectionIds.isEmpty()
+    val isEmpty: Boolean get() = objectIds.isEmpty()
 }
 
 data class FindingEntry(val kind: String, val id: String)
@@ -178,7 +177,7 @@ data class RuntimeState(
     val actionsById: Map<String, RuntimeAction>,
     val resourcesById: Map<String, WorldResource>,
     val navigationById: Map<String, NavigationEntry>,
-    val field: ZoneState,
+    val space: ZoneState,
     val carry: ZoneState,
     val findings: List<FindingEntry>,
     val selectedObjectId: String,
@@ -197,7 +196,7 @@ data class RuntimeState(
             actionsById = emptyMap(),
             resourcesById = emptyMap(),
             navigationById = emptyMap(),
-            field = ZoneState(),
+            space = ZoneState(),
             carry = ZoneState(),
             findings = emptyList(),
             selectedObjectId = "",
@@ -221,16 +220,16 @@ object RuntimeInterpreter {
 
         attachActionsToObjects(objectsById, actionsById)
 
-        val field = resolveZone("field", placements, objectsById, collectionsById)
-        val carry = resolveZone("carry", placements, objectsById, collectionsById)
-        // A field Placement's own content.position (never the Object's own content) is where a
+        val space = resolveZone("space", placements, objectsById)
+        val carry = resolveZone("carry", placements, objectsById)
+        // A space Placement's own content.position (never the Object's own content) is where a
         // marker's real-world coordinates live (placement.md, Space position) -- attach it onto
         // the matching WorldObject here, once, so every existing consumer of
-        // [WorldObject.location] (ClassicArField.kt, ArCorePassthrough.kt) is unaffected.
-        val positionedObjectsById = if (field.positions.isEmpty()) {
+        // [WorldObject.location] (ClassicArSpace.kt, ArCorePassthrough.kt) is unaffected.
+        val positionedObjectsById = if (space.positions.isEmpty()) {
             objectsById
         } else {
-            objectsById.mapValues { (id, obj) -> field.positions[id]?.let { obj.copy(location = it) } ?: obj }
+            objectsById.mapValues { (id, obj) -> space.positions[id]?.let { obj.copy(location = it) } ?: obj }
         }
         val findings = resolveFindings(dataset.optJSONArray("findings"), positionedObjectsById, collectionsById)
 
@@ -252,7 +251,7 @@ object RuntimeInterpreter {
             actionsById = actionsById,
             resourcesById = resourcesById,
             navigationById = navigationById,
-            field = field,
+            space = space,
             carry = carry,
             findings = findings,
             selectedObjectId = selectedObjectId,
@@ -347,13 +346,12 @@ object RuntimeInterpreter {
         val result = mutableListOf<WorldPlacement>()
         for (payload in objects(items)) {
             val type = payload.optString("type")
-            if (type != "carry" && type != "field") continue
+            if (type != "carry" && type != "space") continue
             val content = payload.optJSONObject("content") ?: JSONObject()
             result.add(
                 WorldPlacement(
                     type = type,
                     objectId = content.optString("object"),
-                    collectionId = content.optString("collection"),
                     position = readPosition(content.optJSONObject("position")),
                 )
             )
@@ -415,16 +413,11 @@ object RuntimeInterpreter {
         placementType: String,
         placements: List<WorldPlacement>,
         objectsById: Map<String, WorldObject>,
-        collectionsById: Map<String, WorldCollection>,
     ): ZoneState {
         val objectIds = LinkedHashSet<String>()
-        val collectionIds = LinkedHashSet<String>()
         val positions = LinkedHashMap<String, Pair<Double, Double>>()
         for (placement in placements) {
             if (placement.type != placementType) continue
-            if (placement.collectionId.isNotBlank() && collectionsById.containsKey(placement.collectionId)) {
-                collectionIds.add(placement.collectionId)
-            }
             if (placement.objectId.isNotBlank() && objectsById.containsKey(placement.objectId)) {
                 objectIds.add(placement.objectId)
                 if (placement.position != null) {
@@ -432,7 +425,7 @@ object RuntimeInterpreter {
                 }
             }
         }
-        return ZoneState(objectIds.toList(), collectionIds.toList(), positions)
+        return ZoneState(objectIds.toList(), positions)
     }
 
     private fun resolveFindings(

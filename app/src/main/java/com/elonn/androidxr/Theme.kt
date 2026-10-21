@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * Field's chrome floats over a live camera feed whose real-world lighting/color is unpredictable,
+ * Space's chrome floats over a live camera feed whose real-world lighting/color is unpredictable,
  * so it needs its own deliberately dark, near-opaque, high-contrast palette rather than the default
  * Material 3 light scheme (a pale lavender fill with no border) that was previously used as-is --
  * that combination was close to invisible over some real backgrounds. One fixed dark scheme

@@ -50,8 +50,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Field: real ARCore-for-Jetpack-XR markers, placed via GPS bearing/distance exactly as the old
- * classic-ARCore renderer did (Geo.kt/FieldCamera.kt, both unchanged), but rendered through the
+ * Space: real ARCore-for-Jetpack-XR markers, placed via GPS bearing/distance exactly as the old
+ * classic-ARCore renderer did (Geo.kt/SpaceCamera.kt, both unchanged), but rendered through the
  * real Android XR spatial model instead of a hand-rolled GLSurfaceView/OpenGL camera-passthrough
  * renderer:
  *
@@ -67,7 +67,7 @@ import kotlin.math.sqrt
  * specifically matters (the prior Jetpack XR attempt crashed on-device from exactly that kind of
  * app-owned render loop).
  *
- * Markers are reconciled (not placed once): whenever the Field object set or the member's
+ * Markers are reconciled (not placed once): whenever the Space object set or the member's
  * location changes, new objects with a real [WorldObject.location] get a real Anchor + a real
  * PanelEntity rendering [markerContent]; objects no longer wanted are detached/disposed. Anchor
  * placement retries rather than assuming the first attempt succeeds: the device/head tracking
@@ -78,8 +78,8 @@ import kotlin.math.sqrt
  * different API.
  */
 @Composable
-internal fun ArCoreField(
-    fieldObjects: List<WorldObject>,
+internal fun ArCoreSpace(
+    spaceObjects: List<WorldObject>,
     modifier: Modifier = Modifier,
     markerContent: @Composable (obj: WorldObject, distanceMeters: Double, modifier: Modifier) -> Unit,
     carry: CarryInputs,
@@ -88,11 +88,11 @@ internal fun ArCoreField(
     val context = LocalContext.current
     val activity = context as ComponentActivity
 
-    var permissionGranted by remember { mutableStateOf(hasFieldPermissions(context)) }
+    var permissionGranted by remember { mutableStateOf(hasSpacePermissions(context)) }
     val permissionLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
-        ) { _ -> permissionGranted = hasFieldPermissions(context) }
+        ) { _ -> permissionGranted = hasSpacePermissions(context) }
     val requiredPermissions =
         arrayOf(
             android.Manifest.permission.CAMERA,
@@ -110,7 +110,7 @@ internal fun ArCoreField(
         Box(modifier = modifier) {
             Column(modifier = Modifier.align(Alignment.Center).padding(24.dp)) {
                 Text(
-                    "Field needs camera, location, and scene access to place markers around you.",
+                    "Space needs camera, location, and scene access to place markers around you.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Button(
@@ -155,14 +155,14 @@ internal fun ArCoreField(
         }
     }
 
-    // The only place GPS/compass math runs: whenever the Field object set or the member's
+    // The only place GPS/compass math runs: whenever the Space object set or the member's
     // location changes, reconcile which objects have a real Anchor+panel yet. Existing markers
     // are left completely untouched -- their pose is the Anchor's own tracked pose from here on.
-    LaunchedEffect(session, fieldObjects, location?.latitude, location?.longitude) {
+    LaunchedEffect(session, spaceObjects, location?.latitude, location?.longitude) {
         val currentSession = session ?: return@LaunchedEffect
         val fix = location ?: return@LaunchedEffect
 
-        val withLocation = fieldObjects.filter { it.location != null }
+        val withLocation = spaceObjects.filter { it.location != null }
         val wantedIds = withLocation.map { it.id }.toSet()
 
         val staleIds = markersByObjectId.keys - wantedIds
@@ -180,10 +180,10 @@ internal fun ArCoreField(
         }
     }
 
-    // Carry lives in its own panel, sized CarryPanelSizeMeters and hosted like the Field markers,
+    // Carry lives in its own panel, sized CarryPanelSizeMeters and hosted like the Space markers,
     // so it is not clipped by the system-sized Activity main panel. Each frame its pose is the
     // head-lock calculation: a point a fixed distance ahead of the device, with the device's
-    // rotation. Field markers stay where their anchors put them and turn toward the member.
+    // rotation. Space markers stay where their anchors put them and turn toward the member.
     LaunchedEffect(session) {
         val currentSession = session ?: return@LaunchedEffect
         // Detach any Carry panel from an earlier run first. This effect can run more than once for
@@ -253,11 +253,11 @@ internal fun ArCoreField(
 }
 
 /**
- * Radial distance, in meters, at which every Field marker is presented in SceneCore. A Runtime
- * presentation choice, not canonical data: Field placements carry a geographic location and
- * no distance unit (dev.elonn.local canonical placement/field docs).
+ * Radial distance, in meters, at which every Space marker is presented in SceneCore. A Runtime
+ * presentation choice, not canonical data: Space placements carry a geographic location and
+ * no distance unit (dev.elonn.local canonical placement/space docs).
  */
-private const val FieldPresentationRadiusMeters = 3.0f
+private const val SpacePresentationRadiusMeters = 3.0f
 
 /**
  * Distance of Carry's head-locked main panel from the viewer, in meters. A presentation choice
@@ -269,12 +269,12 @@ private const val CarryPanelDistanceMeters = 1.2f
 private val CarryPanelSizeMeters = FloatSize2d(2.4f, 1.35f)
 
 /**
- * Physical size of each Field marker panel, in meters. The marker's text is laid out in density
+ * Physical size of each Space marker panel, in meters. The marker's text is laid out in density
  * units, so a fixed physical panel makes that text's apparent size depend on the layout's pixel
  * count. At the 3 m radius, 0.8 m × 0.43 m (about 15° × 8° of view) keeps the title and distance
  * legible while leaving the marker clear of the centre of view.
  */
-private val FieldMarkerSizeMeters = FloatSize2d(0.8f, 0.43f)
+private val SpaceMarkerSizeMeters = FloatSize2d(0.8f, 0.43f)
 
 /**
  * Unit horizontal direction the device faces, as (x, z). Straight up or down there is no
@@ -297,9 +297,9 @@ private fun earthElevationRadians(distanceMeters: Double): Double {
 }
 
 /**
- * One Field marker. Its position is fixed in the world by its anchor. Its orientation is not: it
+ * One Space marker. Its position is fixed in the world by its anchor. Its orientation is not: it
  * is re-aimed at the member every frame, so the marker reads as a sign on the horizon that the
- * member moves around, not as a panel attached to the view (Carry does that; Field does not).
+ * member moves around, not as a panel attached to the view (Carry does that; Space does not).
  */
 private class PlacedMarker(
     private val anchor: Anchor,
@@ -324,13 +324,13 @@ private class PlacedMarker(
 }
 
 /**
- * Places one real Anchor + PanelEntity for a single Field object, at a Pose computed once from
+ * Places one real Anchor + PanelEntity for a single Space object, at a Pose computed once from
  * the device's current forward direction rotated by (bearing - headingDegrees) and scaled by
- * FieldPresentationRadiusMeters -- the same bearing calibration xreal.elonn.app's ArFieldRenderer.cs and the old
+ * SpacePresentationRadiusMeters -- the same bearing calibration xreal.elonn.app's ArFieldRenderer.cs and the old
  * classic-ARCore renderer both use: establish which direction in the tracking space's local
  * coordinates corresponds to true north (by rotating the device's own current forward direction
  * back by the live compass heading), then rotate further by the object's real-world bearing.
- * The radial distance is FieldPresentationRadiusMeters, not the real distance: bearing is
+ * The radial distance is SpacePresentationRadiusMeters, not the real distance: bearing is
  * geographically true, radius is presentation (see that constant).
  *
  * Retries up to 20 times (300ms apart): the device/head tracking system frequently hasn't
@@ -371,7 +371,7 @@ private suspend fun placeMarker(
             // Geographic distance stays data: the marker sits at a fixed presentation radius, and
             // the real distance still reaches markerContent via distanceMeters.
             val elevation = earthElevationRadians(distanceMeters)
-            val radius = FieldPresentationRadiusMeters
+            val radius = SpacePresentationRadiusMeters
             val horizontalScale = (cos(elevation) * radius).toFloat()
             val anchorPosition =
                 Vector3(
@@ -426,8 +426,8 @@ private suspend fun placeMarker(
                         PanelEntity.create(
                             session,
                             composeView,
-                            FieldMarkerSizeMeters,
-                            "field-marker-${obj.id}",
+                            SpaceMarkerSizeMeters,
+                            "space-marker-${obj.id}",
                             Pose(Vector3(0f, 0f, 0f), facing),
                             anchorSpace,
                         )

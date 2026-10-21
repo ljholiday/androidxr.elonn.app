@@ -35,7 +35,7 @@ data class WorldCallRequest(
  * Talks to exactly one endpoint: POST /world/call. World has no other routes.
  * Mirrors xreal.elonn.app's WorldClient.cs -- same Call envelope shape, same
  * headers. The renderer and capabilities are reported as this build presents them:
- * a headset declares "headset" and the Field markers it renders, a phone declares
+ * a headset declares "headset" and the Space markers it renders, a phone declares
  * "phone" and only what the phone presentation renders.
  */
 class WorldClient(
@@ -73,12 +73,12 @@ class WorldClient(
                     put("capabilities", JSONObject().apply {
                         put("dock", false)
                         put("surface_stacks", false)
-                        // Real Field markers (GPS-placed Anchor + PanelEntity via Jetpack XR,
+                        // Real Space markers (GPS-placed Anchor + PanelEntity via Jetpack XR,
                         // see ArCorePassthrough.kt) are actually implemented now -- this was
                         // correctly false while this Runtime was only a flat 2D screen with no
-                        // Field rendering at all, but leaving it false now under-reports real
-                        // capability and likely causes World to omit Field placements entirely.
-                        put("field_markers", true)
+                        // Space rendering at all, but leaving it false now under-reports real
+                        // capability and likely causes World to omit Space placements entirely.
+                        put("space_markers", true)
                         put("pointer_input", true)
                         put("stereo_rendering", false)
                         put("headset_mode", renderer == "headset")

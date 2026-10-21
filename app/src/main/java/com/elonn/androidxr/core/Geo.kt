@@ -8,13 +8,15 @@ import kotlin.math.sqrt
 
 /**
  * Standard great-circle formulas, ported exactly from xreal.elonn.app's
- * Geo.cs. Field Objects carry raw lat/lon (content.location, from Maps --
- * verified against maps.elonn.local's MapsCallHandler::fieldObjects, which
- * writes content.location = {latitude, longitude}) but no bearing -- the
- * canonical contract has no such field, so this is computed client-side from
- * the member's current GPS position.
+ * Geo.cs. A Space Object's raw lat/lon comes from its own Space Placement's
+ * content.position (dev.elonn canonical/placement.md; see RuntimeModel.kt's
+ * [WorldObject.location]) -- World composes it from Maps' per-marker
+ * Placement (maps.elonn.local's MapsCallHandler::spaceObjects), never from
+ * the Object's own content -- but no bearing -- the canonical contract has
+ * no such field, so this is computed client-side from the member's current
+ * GPS position.
  *
- * Used only once per Field object, at the moment ArFieldRenderer.placeAnchor
+ * Used only once per Space object, at the moment ArSpaceRenderer.placeAnchor
  * creates its real ARCore Anchor (see ArCorePassthrough.kt): bearing and
  * distance establish that anchor's initial position relative to wherever the
  * camera's local tracking origin currently is. ARCore's own tracked pose
@@ -26,7 +28,7 @@ import kotlin.math.sqrt
  * poses, never device pitch/yaw/roll).
  */
 object Geo {
-    /** Mean Earth radius, the spherical model used for distance and for Field elevation. */
+    /** Mean Earth radius, the spherical model used for distance and for Space elevation. */
     const val EARTH_RADIUS_METERS = 6371000.0
 
     /** Initial bearing in degrees (0-360, 0 = true north), from point 1 to point 2. */

@@ -8,7 +8,7 @@ import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.SessionCreateSuccess
 
 /**
- * Creates and configures the Jetpack XR Session Field's perception (Anchor/Trackable poses,
+ * Creates and configures the Jetpack XR Session Space's perception (Anchor/Trackable poses,
  * device pose) and spatial rendering (SceneCore Entities attached to those poses, see
  * ArCorePassthrough.kt) run on.
  *

@@ -43,10 +43,10 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Field: a real camera passthrough with real ARCore-tracked markers. Per the member's explicit
+ * Space: a real camera passthrough with real ARCore-tracked markers. Per the member's explicit
  * direction: World provides geographic placement (lat/lon, via [WorldObject.location]); ARCore
  * owns localization and tracked spatial pose from there. GPS and compass (Geo.kt,
- * rememberDeviceHeading) are used exactly once per Field object, when [ArFieldRenderer.placeAnchor]
+ * rememberDeviceHeading) are used exactly once per Space object, when [ArSpaceRenderer.placeAnchor]
  * creates its real local ARCore Anchor -- never again after that. Every frame reads each Anchor's
  * own live-tracked Pose and projects it with the camera's real view/projection matrices; there is
  * no device pitch/yaw/roll compensation or per-frame geographic screen-position calculation
@@ -59,19 +59,19 @@ import kotlin.math.sin
  * native code.
  */
 @Composable
-fun ClassicArCoreField(
-    fieldObjects: List<WorldObject>,
+fun ClassicArCoreSpace(
+    spaceObjects: List<WorldObject>,
     modifier: Modifier = Modifier,
     markerContent: @Composable (obj: WorldObject, distanceMeters: Double, modifier: Modifier) -> Unit,
 ) {
     val context = LocalContext.current
     val activity = context as ComponentActivity
 
-    var permissionGranted by remember { mutableStateOf(hasFieldPermissions(context)) }
+    var permissionGranted by remember { mutableStateOf(hasSpacePermissions(context)) }
     val permissionLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
-        ) { _ -> permissionGranted = hasFieldPermissions(context) }
+        ) { _ -> permissionGranted = hasSpacePermissions(context) }
     LaunchedEffect(Unit) {
         if (!permissionGranted) {
             permissionLauncher.launch(arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.ACCESS_FINE_LOCATION))
@@ -81,7 +81,7 @@ fun ClassicArCoreField(
     if (!permissionGranted) {
         Box(modifier = modifier) {
             androidx.compose.foundation.layout.Column(modifier = Modifier.align(Alignment.Center).padding(24.dp)) {
-                Text("Field needs camera and location access to place markers around you.", style = MaterialTheme.typography.bodyMedium)
+                Text("Space needs camera and location access to place markers around you.", style = MaterialTheme.typography.bodyMedium)
                 Button(
                     onClick = {
                         permissionLauncher.launch(arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.ACCESS_FINE_LOCATION))
@@ -95,7 +95,7 @@ fun ClassicArCoreField(
 
     var bridge by remember { mutableStateOf<ClassicArCoreBridge?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var renderer by remember { mutableStateOf<ArFieldRenderer?>(null) }
+    var renderer by remember { mutableStateOf<ArSpaceRenderer?>(null) }
     var markers by remember { mutableStateOf<List<ScreenMarker>>(emptyList()) }
     val location by rememberDeviceLocation()
     val headingDegrees by rememberDeviceHeading()
@@ -115,14 +115,14 @@ fun ClassicArCoreField(
         onDispose { bridge?.pause() }
     }
 
-    // The only place GPS/compass math runs: whenever the Field object set or the member's
+    // The only place GPS/compass math runs: whenever the Space object set or the member's
     // location changes, reconcile which objects have a real Anchor yet. Existing anchors are
     // left completely untouched -- their pose is ARCore's own from here on.
     val fix = location
-    LaunchedEffect(renderer, fieldObjects, fix?.latitude, fix?.longitude) {
+    LaunchedEffect(renderer, spaceObjects, fix?.latitude, fix?.longitude) {
         val currentRenderer = renderer ?: return@LaunchedEffect
         val currentFix = fix ?: return@LaunchedEffect
-        currentRenderer.syncAnchors(fieldObjects, currentFix.latitude, currentFix.longitude, headingDegrees)
+        currentRenderer.syncAnchors(spaceObjects, currentFix.latitude, currentFix.longitude, headingDegrees)
     }
 
     Box(modifier = modifier) {
@@ -137,7 +137,7 @@ fun ClassicArCoreField(
                         GLSurfaceView(ctx).apply {
                             setEGLContextClientVersion(2)
                             val newRenderer =
-                                ArFieldRenderer(
+                                ArSpaceRenderer(
                                     currentBridge,
                                     currentRotation = {
                                         @Suppress("DEPRECATION")
@@ -163,7 +163,7 @@ fun ClassicArCoreField(
                 }
 
                 for (marker in markers) {
-                    val obj = fieldObjects.find { it.id == marker.objectId } ?: continue
+                    val obj = spaceObjects.find { it.id == marker.objectId } ?: continue
                     val loc = obj.location
                     val distance =
                         if (fix != null && loc != null) {
@@ -196,13 +196,13 @@ private fun Modifier.pxOffset(xPx: Float, yPx: Float): Modifier =
  * onDrawFrame -- i.e. from this GLSurfaceView's own GL thread, which has the current EGL context
  * that mode needs.
  *
- * Anchor placement ([syncAnchors]/[placeAnchor]) uses GPS/compass exactly once per Field object,
+ * Anchor placement ([syncAnchors]/[placeAnchor]) uses GPS/compass exactly once per Space object,
  * to compute its initial Pose relative to the camera's local tracking origin at that moment. Every
  * subsequent frame reads each Anchor's own live-tracked Pose ([projectAnchorsToScreen]) and
  * projects it to screen space with the camera's real view/projection matrices for that exact frame
  * -- no bearing, pitch, yaw, or roll math after an anchor is placed.
  */
-private class ArFieldRenderer(
+private class ArSpaceRenderer(
     private val bridge: ClassicArCoreBridge,
     private val currentRotation: () -> Int,
     private val onMarkersUpdated: (List<ScreenMarker>) -> Unit,
@@ -219,13 +219,13 @@ private class ArFieldRenderer(
     private val anchorsByObjectId = mutableMapOf<String, Anchor>()
 
     private data class SyncRequest(
-        val fieldObjects: List<WorldObject>,
+        val spaceObjects: List<WorldObject>,
         val memberLat: Double,
         val memberLon: Double,
         val headingDegrees: Double,
     )
 
-    // Written from Compose's LaunchedEffect (main thread) whenever the Field object set or the
+    // Written from Compose's LaunchedEffect (main thread) whenever the Space object set or the
     // member's location changes; read and acted on from the GL thread in reconcileAnchors, which
     // runs every frame -- see that function's doc for why a single Compose-triggered attempt isn't
     // enough on its own.
@@ -236,19 +236,19 @@ private class ArFieldRenderer(
     private val quadVertexBuffer = directFloatBuffer(quadCoords)
     private var quadTexCoordBuffer = directFloatBuffer(quadTexCoords)
 
-    /** Records the desired Field object set for [reconcileAnchors] to act on -- see its doc. */
-    fun syncAnchors(fieldObjects: List<WorldObject>, memberLat: Double, memberLon: Double, headingDegrees: Double) {
-        pendingSync = SyncRequest(fieldObjects, memberLat, memberLon, headingDegrees)
+    /** Records the desired Space object set for [reconcileAnchors] to act on -- see its doc. */
+    fun syncAnchors(spaceObjects: List<WorldObject>, memberLat: Double, memberLon: Double, headingDegrees: Double) {
+        pendingSync = SyncRequest(spaceObjects, memberLat, memberLon, headingDegrees)
     }
 
     /**
-     * Reconciles which Field objects have a real Anchor yet, using the most recent [syncAnchors]
+     * Reconciles which Space objects have a real Anchor yet, using the most recent [syncAnchors]
      * request. Anchors for objects no longer wanted are detached; new objects with a real
      * [WorldObject.location] get a real ARCore Anchor via [placeAnchor] -- which requires
      * [TrackingState.TRACKING] and silently declines otherwise (see its doc). Called every frame,
      * from the GL thread, rather than once when [syncAnchors] is called: ARCore frequently hasn't
      * reached TRACKING yet in the first frame or two after the session starts (real bug hit live --
-     * two real, correctly-located Field objects never got a marker because the one-shot
+     * two real, correctly-located Space objects never got a marker because the one-shot
      * Compose-triggered placement attempt raced ARCore's own tracking startup and lost, with
      * nothing ever retrying). Anchors already placed are skipped cheaply (a map lookup) every
      * frame; this is not a recurring geographic calculation for already-placed anchors, only a
@@ -256,7 +256,7 @@ private class ArFieldRenderer(
      */
     private fun reconcileAnchors() {
         val request = pendingSync ?: return
-        val withLocation = request.fieldObjects.filter { it.location != null }
+        val withLocation = request.spaceObjects.filter { it.location != null }
         val wantedIds = withLocation.map { it.id }.toSet()
         if (wantedIds == anchorsByObjectId.keys) return
 
@@ -276,7 +276,7 @@ private class ArFieldRenderer(
     }
 
     /**
-     * The one place GPS/compass math happens, for one Field object. [headingDegrees] is the
+     * The one place GPS/compass math happens, for one Space object. [headingDegrees] is the
      * device's real compass heading right now (0 = true north); this establishes, once, which
      * direction in ARCore's local coordinate space corresponds to true north (by rotating the
      * camera's own current forward direction back by that heading) -- the same calibration

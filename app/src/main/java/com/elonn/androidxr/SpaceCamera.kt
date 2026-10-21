@@ -20,24 +20,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 
 /**
- * Only CAMERA/ACCESS_FINE_LOCATION gate Field's UI. SCENE_UNDERSTANDING_COARSE (required by
- * androidx.xr.arcore's Anchor.create) is requested alongside these two (see ArCoreField's
+ * Only CAMERA/ACCESS_FINE_LOCATION gate Space's UI. SCENE_UNDERSTANDING_COARSE (required by
+ * androidx.xr.arcore's Anchor.create) is requested alongside these two (see ArCoreSpace's
  * permissionLauncher) but deliberately NOT required here -- confirmed live on a real Galaxy S24:
  * that permission never appears in the device's runtime-permission grant list at all, meaning
  * this ordinary phone's OS has no grant UI for an Android XR-specific permission, so requiring it
- * would permanently block Field on any non-XR device. Anchor.create failing for a real lack of
+ * would permanently block Space on any non-XR device. Anchor.create failing for a real lack of
  * scene-understanding access is already handled gracefully by placeMarker's retry-then-give-up
  * logic, which is the right place for that failure to surface, not a permanent UI block here.
  */
-fun hasFieldPermissions(context: Context): Boolean =
+fun hasSpacePermissions(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
 /**
  * The member's live GPS position, from the platform LocationManager -- no
  * extra Play Services dependency needed for the one-provider case this app
- * needs. Used exactly once per Field object, at real-anchor-creation time
- * (see ArCorePassthrough.kt's ArFieldRenderer.syncAnchors) -- ARCore's own
+ * needs. Used exactly once per Space object, at real-anchor-creation time
+ * (see ArCorePassthrough.kt's ArSpaceRenderer.syncAnchors) -- ARCore's own
  * tracked Anchor pose is what moves markers on every frame after that, never
  * this location stream directly.
  */
@@ -47,7 +47,7 @@ fun rememberDeviceLocation(): State<Location?> {
     val locationState = remember { mutableStateOf<Location?>(null) }
 
     DisposableEffect(Unit) {
-        if (!hasFieldPermissions(context)) {
+        if (!hasSpacePermissions(context)) {
             return@DisposableEffect onDispose {}
         }
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -72,9 +72,9 @@ fun rememberDeviceLocation(): State<Location?> {
 
 /**
  * True compass heading (0 = north), from the rotation-vector sensor. Used
- * exactly once per Field object, at real-anchor-creation time, to establish
+ * exactly once per Space object, at real-anchor-creation time, to establish
  * which direction in ARCore's local tracking space corresponds to true
- * north (see ArFieldRenderer.placeAnchor's doc) -- never read again after
+ * north (see ArSpaceRenderer.placeAnchor's doc) -- never read again after
  * that for an already-placed anchor. Device pitch and roll are never needed
  * at all: ARCore's own tracked camera pose supplies the real per-frame
  * orientation, which is exactly the "no device pitch/yaw/roll compensation"

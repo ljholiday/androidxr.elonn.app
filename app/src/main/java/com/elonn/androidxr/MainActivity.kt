@@ -75,9 +75,9 @@ import org.json.JSONObject
  * next_step.native_android_field_spike_20260924 on agents.elonn.com). A Runtime
  * owns presentation only -- it never decides what exists, only shows what
  * World's Dataset says exists (CLAUDE.md's Runtime definition; xreal.elonn.app's
- * RuntimeInterpreter is the reference this mirrors). Nothing here is Field-loop-
+ * RuntimeInterpreter is the reference this mirrors). Nothing here is Space-loop-
  * specific UI logic invented for this app: the login form renders generically
- * from an action's argument schema, and the Field screen renders generically
+ * from an action's argument schema, and the Space screen renders generically
  * from Objects/Actions/Placements/Findings, same as every other Runtime.
  */
 class MainActivity : ComponentActivity() {
@@ -85,8 +85,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Without this, Android reserves the status/navigation bars as solid
         // opaque chrome outside the app's own drawable area -- the "white
-        // area on the bottom of the screen" caught live on-device. Field's
-        // camera background is meant to be full-bleed; FieldView insets the
+        // area on the bottom of the screen" caught live on-device. Space's
+        // camera background is meant to be full-bleed; SpaceView insets the
         // interactive layer (Entry, Carry windows) itself so they still land
         // in the safe-drawing area, not under the status/navigation bars.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Loading : Screen
     data class Login(val action: JSONObject, val error: String? = null) : Screen
-    data class Field(val state: RuntimeState) : Screen
+    data class Space(val state: RuntimeState) : Screen
     data class Failed(val message: String) : Screen
 }
 
@@ -131,7 +131,7 @@ private fun ElonnApp() {
     val context = LocalContext.current
     val auth = remember { AuthClient() }
     val world = remember {
-        WorldClient(renderer = if (usesSpatialFieldPresentation(context)) "headset" else "phone")
+        WorldClient(renderer = if (usesSpatialSpacePresentation(context)) "headset" else "phone")
     }
     val tokenStore = remember { TokenStore(context) }
     val scope = rememberCoroutineScope()
@@ -164,7 +164,7 @@ private fun ElonnApp() {
         try {
             val dataset = world.call(currentToken, datasetId, threadId, request)
             val state = RuntimeInterpreter.apply(dataset)
-            screen = Screen.Field(state)
+            screen = Screen.Space(state)
         } catch (e: WorldAuthRequiredException) {
             tokenStore.clear()
             token = null
@@ -176,7 +176,7 @@ private fun ElonnApp() {
         }
     }
 
-    suspend fun restoreField(currentToken: String) {
+    suspend fun restoreSpace(currentToken: String) {
         performCall(currentToken, datasetId = null, threadId = null, WorldCallRequest(operation = "world.restore"))
     }
 
@@ -184,7 +184,7 @@ private fun ElonnApp() {
         val stored = tokenStore.load()
         if (stored != null) {
             token = stored
-            restoreField(stored)
+            restoreSpace(stored)
         } else {
             loadLoginForm()
         }
@@ -212,7 +212,7 @@ private fun ElonnApp() {
         is Screen.Failed -> ErrorView(current.message) {
             scope.launch {
                 val currentToken = token
-                if (currentToken != null) restoreField(currentToken) else loadLoginForm()
+                if (currentToken != null) restoreSpace(currentToken) else loadLoginForm()
             }
         }
         is Screen.Login -> LoginView(current.action, current.error) { values ->
@@ -226,7 +226,7 @@ private fun ElonnApp() {
                     if (accessToken.isNotBlank()) {
                         tokenStore.store(accessToken)
                         token = accessToken
-                        restoreField(accessToken)
+                        restoreSpace(accessToken)
                     } else {
                         val retryAction = findLoginAction(result)
                         screen = if (retryAction != null) {
@@ -240,12 +240,12 @@ private fun ElonnApp() {
                 }
             }
         }
-        is Screen.Field -> FieldView(
+        is Screen.Space -> SpaceView(
             state = current.state,
             isBusy = isBusy,
             resultsPaneChangedCount = resultsPaneChangedCount,
             onSelect = { objectId ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -261,7 +261,7 @@ private fun ElonnApp() {
                 }
             },
             onDispatch = { label, operationInvocation ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -276,7 +276,7 @@ private fun ElonnApp() {
                 }
             },
             onClose = { objectId ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -287,7 +287,7 @@ private fun ElonnApp() {
                 }
             },
             onBack = { objectId ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -298,7 +298,7 @@ private fun ElonnApp() {
                 }
             },
             onSubmitFind = { query ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     // No current.state.threadId here (real bug, root-caused and fixed the same
                     // way in web.elonn.local's submitQuery(): opening a Discovery thread set a
@@ -316,7 +316,7 @@ private fun ElonnApp() {
                 }
             },
             onContinueThread = { threadId, query ->
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -327,7 +327,7 @@ private fun ElonnApp() {
                 }
             },
             onClearResults = {
-                val currentToken = token ?: return@FieldView
+                val currentToken = token ?: return@SpaceView
                 scope.launch {
                     performCall(
                         currentToken,
@@ -441,9 +441,9 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
 
 /**
  * A thin, faithful presentation of the World Dataset, per dev.elonn.local's
- * layout.md and terminology/window.md. Field is a real camera passthrough
+ * layout.md and terminology/window.md. Space is a real camera passthrough
  * background with markers placed by GPS bearing/distance plus live compass
- * heading (Geo.kt) -- unaffected by window mechanics, since Field Placement
+ * heading (Geo.kt) -- unaffected by window mechanics, since Space Placement
  * is immutable and a marker's position is real-world geometry, not something
  * the member drags. Everything on Carry -- including Entry, which is Carry's
  * one non-closable window -- floats over that background as a window: move
@@ -466,7 +466,7 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
  * point to open the member's own profile Object.
  */
 @Composable
-private fun FieldView(
+private fun SpaceView(
     state: RuntimeState,
     isBusy: Boolean,
     resultsPaneChangedCount: Int,
@@ -478,16 +478,12 @@ private fun FieldView(
     onContinueThread: (String, String) -> Unit,
     onClearResults: () -> Unit,
 ) {
-    // A Field Placement can name an Object directly, or a Collection
-    // (e.g. maps.field's real markers live inside collection:maps:maps.field,
-    // not as individual Placements) -- mirrors xreal.elonn.app's
-    // ArFieldRenderer.Rebuild, which expands both the same way.
-    val fieldObjects = (
-        state.field.objectIds +
-            state.field.collectionIds.flatMap { state.collectionsById[it]?.itemIds.orEmpty() }
-        ).distinct().mapNotNull { state.objectsById[it] }
+    // A Space Placement names exactly one Object (placement.md: "A Placement positions one
+    // Object, never a Collection") -- World never emits one naming a Collection, so there is no
+    // Collection-expansion step here.
+    val spaceObjects = state.space.objectIds.mapNotNull { state.objectsById[it] }
     val markerContent: @Composable (WorldObject, Double, Modifier) -> Unit = { obj, distanceMeters, markerModifier ->
-        FieldMarker(
+        SpaceMarker(
             obj = obj,
             distanceMeters = distanceMeters,
             selected = obj.id == state.selectedObjectId,
@@ -513,17 +509,17 @@ private fun FieldView(
         // Headset: real Jetpack XR markers through SceneCore, with Carry in its own head-locked
         // panel. Phone: classic ARCore camera passthrough, with Carry inline. Both render the same
         // markers through markerContent and the same Carry content through CarryLayer.
-        if (usesSpatialFieldPresentation(LocalContext.current)) {
-            ArCoreField(
-                fieldObjects = fieldObjects,
+        if (usesSpatialSpacePresentation(LocalContext.current)) {
+            ArCoreSpace(
+                spaceObjects = spaceObjects,
                 modifier = Modifier.fillMaxSize(),
                 markerContent = markerContent,
                 carry = carry,
                 carryContent = { CarryLayer(it) },
             )
         } else {
-            ClassicArCoreField(
-                fieldObjects = fieldObjects,
+            ClassicArCoreSpace(
+                spaceObjects = spaceObjects,
                 modifier = Modifier.fillMaxSize(),
                 markerContent = markerContent,
             )
@@ -655,7 +651,7 @@ internal fun CarryLayer(inputs: CarryInputs) {
  * Clear dispatches world.clear, which empties the Results pane in World's
  * saved state, not just this screen. Collapsing (tap the header, or the
  * explicit show/hide button) is local-only and never touches World -- exactly
- * layout.md's "does not hide Entry, no effect on Carry or Field."
+ * layout.md's "does not hide Entry, no effect on Carry or Space."
  */
 @Composable
 private fun EntryResultsWindow(
@@ -760,15 +756,15 @@ private fun EntryResultsWindow(
 }
 
 /**
- * A Field marker card. Positioning is entirely the caller's concern now
- * (ArCoreField.kt's ArCoreField passes a Modifier that places this at the
+ * A Space marker card. Positioning is entirely the caller's concern now
+ * (ArCorePassthrough.kt's ArCoreSpace passes a Modifier that places this at the
  * real ARCore-tracked screen position for this object's Anchor, recomputed
  * every frame from the camera's own view/projection matrices) -- this
  * composable only renders the card, it does not know or care where it ends
  * up on screen.
  */
 @Composable
-private fun FieldMarker(
+private fun SpaceMarker(
     obj: WorldObject,
     distanceMeters: Double,
     selected: Boolean,
@@ -788,7 +784,7 @@ private fun FieldMarker(
             .clickable { onSelect(obj.id) }
             .padding(ElonnSpacing.xs),
     ) {
-        // Field markers are read at a distance inside a headset, so they use body-scale type.
+        // Space markers are read at a distance inside a headset, so they use body-scale type.
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleLarge, color = Color.White)
         Text("${distanceMeters.toInt()}m away", style = MaterialTheme.typography.bodyLarge, color = Color.White)
     }
@@ -975,7 +971,7 @@ private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -
  * references" and "Focusing a Finding opens the Object [...] on Carry" --
  * the full Object (its Resources, its Actions, an embedded WebView) belongs
  * to that opened-on-Carry presentation (the FloatingWindow body in
- * FieldView), never to its Results-pane row. Rendering an Object's full
+ * SpaceView), never to its Results-pane row. Rendering an Object's full
  * Resources/Actions here was a real bug: searching "profile" surfaced the
  * member's account Dashboard Object as a Finding, and this row rendered
  * every one of its argument forms (Save profile, Save messaging preference,

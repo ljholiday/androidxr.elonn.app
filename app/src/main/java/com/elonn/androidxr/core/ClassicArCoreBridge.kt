@@ -13,8 +13,8 @@ import com.google.ar.core.Session
  * ARCore's own on-device motion tracking. This is the standard way every
  * ARCore app has worked since ARCore 1.0.
  *
- * GPS and compass (Geo.kt, FieldCamera.kt) are used exactly once, at
- * [createAnchor] time, to compute a Field object's position relative to
+ * GPS and compass (Geo.kt, SpaceCamera.kt) are used exactly once, at
+ * [createAnchor] time, to compute a Space object's position relative to
  * wherever the camera's own local tracking origin currently is. After that,
  * the Anchor's own tracked Pose is what moves the marker -- this class and
  * its caller never touch device pitch/yaw/roll or recompute a bearing again.
