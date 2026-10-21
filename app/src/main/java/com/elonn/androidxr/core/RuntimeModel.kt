@@ -19,23 +19,72 @@ data class WorldObject(
     val content: JSONObject,
     val resourceIds: List<String> = emptyList(),
     val actionIds: MutableList<String> = mutableListOf(),
+    /**
+     * The real-world position this Object is placed at, read from its own `field` Placement's
+     * content.position (dev.elonn canonical/placement.md, Space position) -- never from the
+     * Object's own content. An Object's own descriptive geographic data, if it ever carries any,
+     * and its Placement's position are different facts and are never collapsed into one field
+     * (placement.md: "the two are different facts and are never collapsed into one field").
+     * RuntimeInterpreter.apply() attaches this after placements are parsed; null for an Object
+     * with no `field` Placement, or one with no position.
+     */
+    val location: Pair<Double, Double>? = null,
 ) {
-    /** Same fallback web.elonn's meta line uses: summary if present, else the type. */
-    val meta: String get() = summary.ifBlank { type }
+    /**
+     * The Finding card's meta line -- summary only. web.elonn.local never
+     * falls back to showing an Object's raw `type` here (web-renderer.js only
+     * appends a meta/summary node `if (object.summary !== '')`, otherwise
+     * omits the line entirely); this file previously claimed that fallback
+     * matched web, which was wrong and went unnoticed until a `world.thread`
+     * Object (summary always blank) surfaced it as a literal "world.thread"
+     * line under a search's title.
+     */
+    val meta: String get() = summary
 
     /**
-     * content.location (verified against maps.elonn.local's
-     * MapsCallHandler::fieldObjects: {latitude, longitude}) -- the real-world
-     * position Field actually places this Object at. Null for anything World
-     * didn't attach coordinates to.
+     * content.turns (dev.elonn canonical/thread.md; world.elonn's
+     * Composer::withDiscoveryThread()): this Object's own ordered Turns,
+     * oldest first, when it is a `world.thread` Discovery thread. Empty for
+     * every other Object type -- World only attaches `turns` to that one
+     * Recognized type.
      */
-    val location: Pair<Double, Double>?
+    val turns: List<WorldTurn>
         get() {
-            val loc = content.optJSONObject("location") ?: return null
-            if (!loc.has("latitude") || !loc.has("longitude")) return null
-            return loc.optDouble("latitude") to loc.optDouble("longitude")
+            val array = content.optJSONArray("turns") ?: return emptyList()
+            return (0 until array.length()).mapNotNull { index ->
+                val turn = array.opt(index) as? JSONObject ?: return@mapNotNull null
+                WorldTurn(
+                    ordinal = turn.optInt("ordinal", index + 1),
+                    input = turn.optString("input"),
+                    clarifyingQuestion = turn.optString("clarifying_question"),
+                )
+            }
+        }
+
+    /**
+     * This Object's own Thread id, read from its id ("world.thread:" + the
+     * Thread's id -- world.elonn's Composer::withDiscoveryThread()), for a
+     * world.thread Object only. Continuing this specific Thread must name
+     * this id, never RuntimeState.threadId -- that tracks whichever Thread
+     * the main Entry last searched, a different, unrelated Thread from
+     * whichever one of these Objects happens to be open (web.elonn.local's
+     * continueDiscoveryThread() carries the same comment, after a real bug
+     * where the main Entry silently kept continuing an old Thread). Blank
+     * for every other Object type.
+     */
+    val discoveryThreadId: String
+        get() {
+            val prefix = "world.thread:"
+            return if (type == "world.thread" && id.startsWith(prefix)) id.removePrefix(prefix) else ""
         }
 }
+
+/** One Turn of a `world.thread` Discovery thread (thread.md): the member's own input for that Turn, and the clarifying question Conductor asked for it, if any. */
+data class WorldTurn(
+    val ordinal: Int,
+    val input: String,
+    val clarifyingQuestion: String,
+)
 
 /**
  * resource.md: a Resource is never a loose URL a Runtime reads to decide
@@ -89,11 +138,14 @@ private data class WorldPlacement(
     val type: String,
     val objectId: String,
     val collectionId: String,
+    val position: Pair<Double, Double>?,
 )
 
 data class ZoneState(
     val objectIds: List<String> = emptyList(),
     val collectionIds: List<String> = emptyList(),
+    /** Object id -> (latitude, longitude), for every Object in this zone with a real position. */
+    val positions: Map<String, Pair<Double, Double>> = emptyMap(),
 ) {
     val isEmpty: Boolean get() = objectIds.isEmpty() && collectionIds.isEmpty()
 }
@@ -171,11 +223,20 @@ object RuntimeInterpreter {
 
         val field = resolveZone("field", placements, objectsById, collectionsById)
         val carry = resolveZone("carry", placements, objectsById, collectionsById)
-        val findings = resolveFindings(dataset.optJSONArray("findings"), objectsById, collectionsById)
+        // A field Placement's own content.position (never the Object's own content) is where a
+        // marker's real-world coordinates live (placement.md, Space position) -- attach it onto
+        // the matching WorldObject here, once, so every existing consumer of
+        // [WorldObject.location] (ClassicArField.kt, ArCorePassthrough.kt) is unaffected.
+        val positionedObjectsById = if (field.positions.isEmpty()) {
+            objectsById
+        } else {
+            objectsById.mapValues { (id, obj) -> field.positions[id]?.let { obj.copy(location = it) } ?: obj }
+        }
+        val findings = resolveFindings(dataset.optJSONArray("findings"), positionedObjectsById, collectionsById)
 
         val context = dataset.optJSONObject("context")
         val selectedObjectId = context?.optJSONObject("focus")?.optString("object_id").orEmpty()
-            .takeIf { objectsById.containsKey(it) } ?: ""
+            .takeIf { positionedObjectsById.containsKey(it) } ?: ""
         val navigationById = readNavigation(context?.optJSONObject("objects"))
         val status = readStatus(context?.optJSONObject("status"))
         // context.thread_id (dev.elonn canonical/thread.md, world.elonn's WorldService::withThreadId):
@@ -186,7 +247,7 @@ object RuntimeInterpreter {
         return RuntimeState(
             datasetId = dataset.optString("id"),
             threadId = threadId,
-            objectsById = objectsById,
+            objectsById = positionedObjectsById,
             collectionsById = collectionsById,
             actionsById = actionsById,
             resourcesById = resourcesById,
@@ -293,10 +354,24 @@ object RuntimeInterpreter {
                     type = type,
                     objectId = content.optString("object"),
                     collectionId = content.optString("collection"),
+                    position = readPosition(content.optJSONObject("position")),
                 )
             )
         }
         return result
+    }
+
+    /**
+     * A Placement's content.position (dev.elonn canonical/placement.md, Space position): a
+     * closed, extensible vocabulary on `type` -- only `geographic` is defined, requiring both
+     * `latitude` and `longitude`. Anything else (wrong type, either coordinate missing) is not a
+     * position at all; this Runtime does not validate range/finiteness itself -- World already
+     * rejects an invalid position before this is ever sent.
+     */
+    private fun readPosition(position: JSONObject?): Pair<Double, Double>? {
+        if (position == null || position.optString("type") != "geographic") return null
+        if (!position.has("latitude") || !position.has("longitude")) return null
+        return position.optDouble("latitude") to position.optDouble("longitude")
     }
 
     // context.objects (dataset.md, context.md): title/depth/history/subject/region
@@ -344,6 +419,7 @@ object RuntimeInterpreter {
     ): ZoneState {
         val objectIds = LinkedHashSet<String>()
         val collectionIds = LinkedHashSet<String>()
+        val positions = LinkedHashMap<String, Pair<Double, Double>>()
         for (placement in placements) {
             if (placement.type != placementType) continue
             if (placement.collectionId.isNotBlank() && collectionsById.containsKey(placement.collectionId)) {
@@ -351,9 +427,12 @@ object RuntimeInterpreter {
             }
             if (placement.objectId.isNotBlank() && objectsById.containsKey(placement.objectId)) {
                 objectIds.add(placement.objectId)
+                if (placement.position != null) {
+                    positions[placement.objectId] = placement.position
+                }
             }
         }
-        return ZoneState(objectIds.toList(), collectionIds.toList())
+        return ZoneState(objectIds.toList(), collectionIds.toList(), positions)
     }
 
     private fun resolveFindings(
