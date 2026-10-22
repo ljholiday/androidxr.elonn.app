@@ -68,6 +68,7 @@ import com.elonn.androidxr.core.WorldCollection
 import com.elonn.androidxr.core.WorldObject
 import com.elonn.androidxr.core.WorldResource
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -623,7 +624,10 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                     ThreadTurns(obj)
                                     ThreadContinueForm(obj.discoveryThreadId, inputs.onContinueThread)
                                 } else {
-                                    if (obj.summary.isNotBlank()) {
+                                    val bodyNodes = obj.content.optJSONArray("body")
+                                    if (bodyNodes != null && bodyNodes.length() > 0) {
+                                        BodyContentNodes(bodyNodes, state)
+                                    } else if (obj.summary.isNotBlank()) {
                                         Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
                                     }
                                     ResourceLines(obj, state)
@@ -832,6 +836,79 @@ private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
+
+/**
+ * An Object's own canonical content.body (dev.elonn canonical/object.md, Content body): an
+ * ordered list of content nodes a Runtime renders generically, with zero Service-specific
+ * interpretation, before ever falling back to the Object's bare summary text -- the same
+ * vocabulary and the same precedence web.elonn.local's canonicalBodyNodes()/contentTreeNodes()
+ * already use. World Dataset refactor step 9 (Runtime completion): this Runtime previously had
+ * no renderer for it at all and only ever showed summary.
+ */
+@Composable
+private fun BodyContentNodes(nodes: JSONArray, state: RuntimeState) {
+    Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.sm)) {
+        for (i in 0 until nodes.length()) {
+            val node = nodes.optJSONObject(i) ?: continue
+            BodyContentNode(node, state)
+        }
+    }
+}
+
+@Composable
+private fun BodyContentNode(node: JSONObject, state: RuntimeState) {
+    when (node.optString("node")) {
+        "heading" -> Text(node.optString("text"), style = MaterialTheme.typography.titleSmall)
+        "paragraph" -> Text(node.optString("text"), style = MaterialTheme.typography.bodyMedium)
+        // group has no semantic label of its own; section's `kind` is content-level
+        // semantics, not presentation (object.md, Content body) -- neither is rendered
+        // differently here yet, both just recurse their own content in order.
+        "group", "section" -> BodyContentNodes(node.optJSONArray("content") ?: JSONArray(), state)
+        "list" -> BodyList(node, state)
+        "media" -> BodyMedia(node, state)
+    }
+}
+
+@Composable
+private fun BodyList(node: JSONObject, state: RuntimeState) {
+    val ordered = node.optBoolean("ordered", false)
+    val items = node.optJSONArray("items") ?: JSONArray()
+    Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.sm)) {
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            Row {
+                Text(if (ordered) "${i + 1}. " else "• ", style = MaterialTheme.typography.bodyMedium)
+                BodyContentNodes(item.optJSONArray("content") ?: JSONArray(), state)
+            }
+        }
+    }
+}
+
+/** A `media` node's own `resource` field names a promoted Resource -- the same
+ * Elonn-constructed, provider-table-vetted boundary ResourceLines already resolves through,
+ * never a raw URL on the node itself (mirrors web.elonn.local's resourceById/documentMedia). */
+@Composable
+private fun BodyMedia(node: JSONObject, state: RuntimeState) {
+    val resource = state.resourcesById[node.optString("resource")] ?: return
+    when {
+        resource.isEmbeddable -> AndroidView(
+            modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    loadUrl(resource.source)
+                }
+            },
+            update = { view -> if (view.url != resource.source) view.loadUrl(resource.source) },
+        )
+        resource.isExternalReference -> Text(
+            externalReferenceText(resource),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 
