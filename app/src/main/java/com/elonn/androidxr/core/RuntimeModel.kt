@@ -101,7 +101,58 @@ data class WorldResource(
     val label: String,
 ) {
     val isEmbeddable: Boolean get() = kind == "embed" && source.isNotBlank()
-    val isExternalReference: Boolean get() = !isEmbeddable && source.startsWith("http")
+    // resource.md, Preview presentation: a Runtime presents a Resource whose own declared
+    // kind identifies it as an image as a visual preview, from the Resource's own kind alone
+    // -- never inferred from the owning Service or the field name that referenced it.
+    val isImage: Boolean get() = kind == "image" && source.isNotBlank()
+    val isExternalReference: Boolean get() = !isEmbeddable && !isImage && source.startsWith("http")
+}
+
+/**
+ * The first eligible image media node in an Object's content.body, in document order
+ * (dev.elonn canonical/object.md, Content body; decision.thumbnail_is_a_media_node_not_a_
+ * canonical_field_20261024), resolved against the Dataset's flat resources list. Used both
+ * for a compact card's own preview and for BodyMedia's opened-panel rendering -- never a
+ * Service-specific content.thumbnail field, and never inferred by scanning an Object's
+ * Resources for one that merely looks like an image.
+ */
+fun firstImageMediaResource(obj: WorldObject, state: RuntimeState): WorldResource? {
+    val node = firstImageMediaNode(obj.content.optJSONArray("body")) ?: return null
+    val resourceId = node.optString("resource_or_object_ref")
+    if (resourceId.isBlank()) return null
+    return state.resourcesById[resourceId]
+}
+
+private fun firstImageMediaNode(nodes: org.json.JSONArray?): JSONObject? =
+    firstMatchingBodyNode(nodes) { node -> node.optString("node") == "media" && node.optString("kind") == "image" }
+
+/**
+ * The one traversal every "find the first X in content.body" need shares -- depth-first,
+ * document order, recursing through group/section/list. A compact or opened presentation
+ * never hand-rolls its own partial walk of the content-node vocabulary (object.md, Content
+ * body); it asks this for the first node matching what it needs, so every such need stays
+ * consistent with what a full body render would show first, and with each other.
+ */
+private fun firstMatchingBodyNode(nodes: org.json.JSONArray?, predicate: (JSONObject) -> Boolean): JSONObject? {
+    if (nodes == null) return null
+    for (index in 0 until nodes.length()) {
+        val node = nodes.optJSONObject(index) ?: continue
+        if (predicate(node)) return node
+        val kind = node.optString("node")
+        if (kind == "section" || kind == "group") {
+            val found = firstMatchingBodyNode(node.optJSONArray("content"), predicate)
+            if (found != null) return found
+        }
+        if (kind == "list") {
+            val items = node.optJSONArray("items") ?: continue
+            for (itemIndex in 0 until items.length()) {
+                val item = items.optJSONObject(itemIndex) ?: continue
+                val found = firstMatchingBodyNode(item.optJSONArray("content"), predicate)
+                if (found != null) return found
+            }
+        }
+    }
+    return null
 }
 
 data class RuntimeAction(

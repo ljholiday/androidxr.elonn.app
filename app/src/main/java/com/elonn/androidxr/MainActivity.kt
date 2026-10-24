@@ -56,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
 import com.elonn.androidxr.core.FindingEntry
+import com.elonn.androidxr.core.firstImageMediaResource
 import com.elonn.androidxr.core.PanelStore
 import com.elonn.androidxr.core.RuntimeAction
 import com.elonn.androidxr.core.RuntimeInterpreter
@@ -626,10 +627,20 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                     ThreadContinueForm(obj.discoveryThreadId, inputs.onContinueThread)
                                 } else {
                                     val bodyNodes = obj.content.optJSONArray("body")
+                                    // summary and body are not a strict either/or (object.md,
+                                    // Content body: the canonical text fields "remain
+                                    // separate, top-level, and unaffected by body").
+                                    // decision.summary_is_descriptive_not_a_content_excerpt_
+                                    // 20261024: summary is an optional descriptive field,
+                                    // never a derived content excerpt -- a legitimate summary
+                                    // and a real body may coexist, and this screen never
+                                    // suppresses either based solely on the presence of the
+                                    // other, even when body carries its own real text.
+                                    if (obj.summary.isNotBlank()) {
+                                        Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
+                                    }
                                     if (bodyNodes != null && bodyNodes.length() > 0) {
                                         BodyContentNodes(bodyNodes, state)
-                                    } else if (obj.summary.isNotBlank()) {
-                                        Text(obj.summary, style = MaterialTheme.typography.bodyMedium)
                                     }
                                     ResourceLines(obj, state)
                                     ActionLines(obj, state, inputs.onDispatch)
@@ -894,6 +905,10 @@ private fun BodyList(node: JSONObject, state: RuntimeState) {
 private fun BodyMedia(node: JSONObject, state: RuntimeState) {
     val resource = state.resourcesById[node.optString("resource")] ?: return
     when {
+        resource.isImage -> RemoteImage(
+            url = resource.source,
+            modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
+        )
         resource.isEmbeddable -> AndroidView(
             modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
             factory = { context ->
@@ -1064,6 +1079,11 @@ private fun ObjectRow(
 ) {
     val selected = obj.id == state.selectedObjectId
     val sourceText = firstExternalReferenceText(obj, state)
+    // decision.thumbnail_is_a_media_node_not_a_canonical_field_20261024: a compact card's own
+    // preview image, the same first-eligible-image-media-node-in-content.body rule every
+    // compact card uses -- not the Object's full Resources/Actions, which this row
+    // deliberately never renders (see class doc comment above).
+    val previewResource = firstImageMediaResource(obj, state)
 
     Column(
         modifier = Modifier
@@ -1080,6 +1100,12 @@ private fun ObjectRow(
             )
             .padding(vertical = ElonnSpacing.xs, horizontal = ElonnSpacing.sm),
     ) {
+        if (previewResource != null) {
+            RemoteImage(
+                url = previewResource.source,
+                modifier = Modifier.fillMaxWidth().height(120.dp),
+            )
+        }
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
         if (obj.meta.isNotBlank()) {
             Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
