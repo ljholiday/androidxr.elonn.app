@@ -90,4 +90,12 @@ dependencies {
     // presentation uses Jetpack XR's Session/Anchor APIs instead. Version as it was when this
     // path last ran on a Galaxy S24.
     implementation("com.google.ar:core:1.56.0")
+
+    // JVM unit tests (app/src/test). Android's own org.json is a build-time stub that throws
+    // on every call under the default unit-test runner (no real Android runtime); org.json:json
+    // is the same API backed by a real implementation, so RuntimeModel.kt's JSONObject/
+    // JSONArray-based parsing logic can be tested on the plain JVM, no device/emulator or
+    // Robolectric needed.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
