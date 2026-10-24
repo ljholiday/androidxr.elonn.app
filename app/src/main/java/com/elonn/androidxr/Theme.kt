@@ -100,6 +100,13 @@ private fun elonnColorScheme(theme: ResolvedTheme): ColorScheme {
         onPrimary = background,
         primaryContainer = surface,
         onPrimaryContainer = text,
+        // secondaryContainer/onSecondaryContainer are the actual dominant roles in this app's
+        // own UI -- PanelWindow's main FloatingWindow background, plus several muted-text spots
+        // (MainActivity.kt) -- not primaryContainer/onPrimaryContainer above, which have far
+        // fewer real call sites. Confirmed by grepping every MaterialTheme.colorScheme.* call
+        // site in this repo rather than assumed from Material3's naming.
+        secondaryContainer = surface,
+        onSecondaryContainer = text,
         error = danger,
         onError = background,
         outline = border,
