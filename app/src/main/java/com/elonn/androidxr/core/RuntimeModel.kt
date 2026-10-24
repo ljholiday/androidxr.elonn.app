@@ -182,6 +182,7 @@ data class RuntimeState(
     val findings: List<FindingEntry>,
     val selectedObjectId: String,
     val status: DatasetStatus,
+    val theme: ResolvedTheme,
 ) {
     /** context.objects[id].title, falling back to the Object's own title (web.elonn parity). */
     fun carryTitle(obj: WorldObject): String =
@@ -201,6 +202,7 @@ data class RuntimeState(
             findings = emptyList(),
             selectedObjectId = "",
             status = DatasetStatus("ok", ""),
+            theme = ResolvedTheme.Empty,
         )
     }
 }
@@ -238,6 +240,7 @@ object RuntimeInterpreter {
             .takeIf { positionedObjectsById.containsKey(it) } ?: ""
         val navigationById = readNavigation(context?.optJSONObject("objects"))
         val status = readStatus(context?.optJSONObject("status"))
+        val theme = readTheme(context?.optJSONObject("theme"))
         // context.thread_id (dev.elonn canonical/thread.md, world.elonn's WorldService::withThreadId):
         // always present on a response -- the id to continue, or "" when world.clear ended the
         // Thread. Never fabricated client-side; just echoed back verbatim on the next Call.
@@ -256,6 +259,7 @@ object RuntimeInterpreter {
             findings = findings,
             selectedObjectId = selectedObjectId,
             status = status,
+            theme = theme,
         )
     }
 

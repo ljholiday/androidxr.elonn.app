@@ -165,6 +165,7 @@ private fun ElonnApp() {
         try {
             val dataset = world.call(currentToken, datasetId, threadId, request)
             val state = RuntimeInterpreter.apply(dataset)
+            CurrentTheme.value = state.theme
             screen = Screen.Space(state)
         } catch (e: WorldAuthRequiredException) {
             tokenStore.clear()
@@ -779,11 +780,11 @@ private fun SpaceMarker(
     val unselectedColor = MaterialTheme.colorScheme.surface
     Column(
         modifier = modifier
-            .background(if (selected) selectedColor else unselectedColor, RoundedCornerShape(8.dp))
+            .background(if (selected) selectedColor else unselectedColor, RoundedCornerShape(ElonnRadius.card))
             .border(
                 ElonnBorderWidth,
                 if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                RoundedCornerShape(8.dp),
+                RoundedCornerShape(ElonnRadius.card),
             )
             .clickable { onSelect(obj.id) }
             .padding(ElonnSpacing.xs),
@@ -1070,12 +1071,12 @@ private fun ObjectRow(
             .clickable { onSelect(obj.id) }
             .background(
                 if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                RoundedCornerShape(8.dp),
+                RoundedCornerShape(ElonnRadius.card),
             )
             .border(
                 ElonnBorderWidth,
                 if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                RoundedCornerShape(8.dp),
+                RoundedCornerShape(ElonnRadius.card),
             )
             .padding(vertical = ElonnSpacing.xs, horizontal = ElonnSpacing.sm),
     ) {

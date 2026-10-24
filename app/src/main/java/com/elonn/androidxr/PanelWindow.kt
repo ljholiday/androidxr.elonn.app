@@ -147,8 +147,8 @@ fun FloatingWindow(
                     raise()
                 }
             }
-            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(10.dp))
-            .border(ElonnBorderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp)),
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(ElonnRadius.panel))
+            .border(ElonnBorderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(ElonnRadius.panel)),
     ) {
         // The header both drags the window (like any title bar) and, on a
         // plain tap -- not a drag -- toggles collapse. requireUnconsumed on
@@ -221,8 +221,8 @@ fun FloatingWindow(
                     .align(Alignment.End)
                     .size(28.dp)
                     .padding(ElonnSpacing.xs)
-                    .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                    .border(ElonnBorderWidth, MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(ElonnRadius.handle))
+                    .border(ElonnBorderWidth, MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(ElonnRadius.handle))
                     .pointerInput(panelId) {
                         detectResizeDrag(
                             onDragEnd = { persist() },
