@@ -1021,7 +1021,7 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
         for (action in actions) {
             when {
                 action.isSimpleAction -> TextButton(onClick = { onDispatch(action.label, action.operationInvocation!!) }) { Text(action.label) }
-                action.needsForm -> ActionForm(action, onDispatch)
+                action.needsForm -> ActionForm(action)
                 !action.enabled -> Column(modifier = Modifier.padding(vertical = 2.dp)) {
                     Text(action.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f))
                     if (action.reason.isNotBlank()) {
@@ -1034,46 +1034,27 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
 }
 
 /**
- * The same generic argument-schema rendering LoginView uses, for an ordinary
- * Object Action instead of identity.login -- web.elonn.local's operationForm /
- * submitOperationForm build the same way: `arguments` is only the field-spec
- * map used to render inputs, never resubmitted. Conductor's explicit-invocation
- * path (ServicePlanner::operationAndArguments) reads supplied values exclusively
- * from `operation_invocation.payload`, so a filled value must be merged into
- * `payload` -- any fields already there (e.g. conductor.clarify's own
- * original_call/clarification_round) have to survive alongside it, not be
- * dropped, and `arguments` must not be resubmitted at all.
+ * BLOCKED, deliberately, pending decision.generic_form_payload_initialization_option_a_
+ * 20261025 (agents.elonn.com): this used to open every multi-argument Action's form with
+ * every field blank (`mutableStateOf("")`), with no initialization from
+ * operation_invocation.payload at all. For a full-replacement operation (e.g.
+ * identity.profile.update) that is a live data-loss path -- submitting wipes any field the
+ * member did not retype. The canonical fix (the owning Service supplies initial values in
+ * payload; this Runtime initializes from payload -> Contract default -> empty, never from
+ * guessing at Object content) is real, cross-Runtime work, not a quick patch -- so submission
+ * stays blocked here until that lands and is verified, rather than leaving the destructive
+ * path open, or copying web.elonn.local's/unity.elonn.app's own guess-based workaround (the
+ * thing the canonical fix exists to remove, not extend).
  */
 @Composable
-private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -> Unit) {
-    val invocation = action.operationInvocation ?: return
-    val arguments = invocation.optJSONObject("arguments") ?: JSONObject()
-    val keys = action.argumentKeys
-    val fieldValues = remember(action.id) { keys.associateWith { mutableStateOf("") } }
-
+private fun ActionForm(action: RuntimeAction) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(action.label, style = MaterialTheme.typography.labelLarge)
-        for (key in keys) {
-            val spec = arguments.optJSONObject(key) ?: JSONObject()
-            var value by fieldValues.getValue(key)
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                label = { Text(spec.optString("label", key)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            )
-        }
-        TextButton(onClick = {
-            val existingPayload = invocation.optJSONObject("payload")
-            val payload = if (existingPayload != null) JSONObject(existingPayload.toString()) else JSONObject()
-            for (key in keys) payload.put(key, fieldValues.getValue(key).value)
-            val filledInvocation = JSONObject(invocation.toString()).apply {
-                remove("arguments")
-                put("payload", payload)
-            }
-            onDispatch(action.label, filledInvocation)
-        }) { Text("Submit") }
+        Text(
+            "Editing isn't available on this device yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+        )
     }
 }
 
