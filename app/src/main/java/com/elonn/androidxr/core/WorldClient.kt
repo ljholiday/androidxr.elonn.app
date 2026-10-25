@@ -29,6 +29,10 @@ data class WorldCallRequest(
     val operationInvocation: JSONObject? = null,
     val originObject: String? = null,
     val selectedObjectId: String? = null,
+    // world.focus_region (dev.elonn canonical/context.md, "Recognized detail: region focus"):
+    // which region of originObject to focus. Mirrors unity.elonn.app's WorldCallRequest.Region /
+    // web.elonn.local's world-client.js content.region.
+    val region: String? = null,
 )
 
 /**
@@ -63,6 +67,9 @@ class WorldClient(
                 })
                 if (request.operationInvocation != null) {
                     put("operation_invocation", request.operationInvocation)
+                }
+                if (!request.region.isNullOrBlank()) {
+                    put("region", request.region)
                 }
             })
             put("context", JSONObject().apply {

@@ -300,6 +300,17 @@ private fun ElonnApp() {
                     )
                 }
             },
+            onFocusRegion = { objectId, region ->
+                val currentToken = token ?: return@SpaceView
+                scope.launch {
+                    performCall(
+                        currentToken,
+                        current.state.datasetId,
+                        current.state.threadId,
+                        WorldCallRequest(operation = "world.focus_region", inputText = "world.focus_region", originObject = objectId, region = region),
+                    )
+                }
+            },
             onSubmitFind = { query ->
                 val currentToken = token ?: return@SpaceView
                 scope.launch {
@@ -480,6 +491,7 @@ private fun SpaceView(
     onSubmitFind: (String) -> Unit,
     onContinueThread: (String, String) -> Unit,
     onClearResults: () -> Unit,
+    onFocusRegion: (String, String) -> Unit,
 ) {
     // A Space Placement names exactly one Object (placement.md: "A Placement positions one
     // Object, never a Collection") -- World never emits one naming a Collection, so there is no
@@ -506,6 +518,7 @@ private fun SpaceView(
         onSubmitFind = onSubmitFind,
         onContinueThread = onContinueThread,
         onClearResults = onClearResults,
+        onFocusRegion = onFocusRegion,
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -546,6 +559,7 @@ internal data class CarryInputs(
     val onSubmitFind: (String) -> Unit,
     val onContinueThread: (String, String) -> Unit,
     val onClearResults: () -> Unit,
+    val onFocusRegion: (String, String) -> Unit,
 )
 
 /**
@@ -625,6 +639,21 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                 if (obj.type == "world.thread") {
                                     ThreadTurns(obj)
                                     ThreadContinueForm(obj.discoveryThreadId, inputs.onContinueThread)
+                                } else if (obj.type == "document") {
+                                    // An interpreted web document (Find's find.open result,
+                                    // dev.elonn canonical/html.md) is partitioned into semantic
+                                    // regions (content.regions), never content.body -- mirrors
+                                    // web.elonn.local's documentNode()/unity.elonn.app's
+                                    // RenderDocument() exactly, including presenting the region
+                                    // list first and never falling back to summary/body for a
+                                    // document (a region IS its content, not a substitute for
+                                    // it).
+                                    DocumentBody(
+                                        obj = obj,
+                                        focusedRegion = state.navigationById[obj.id]?.region.orEmpty(),
+                                        onFocusRegion = inputs.onFocusRegion,
+                                        state = state,
+                                    )
                                 } else {
                                     val bodyNodes = obj.content.optJSONArray("body")
                                     // summary and body are not a strict either/or (object.md,
@@ -859,6 +888,71 @@ private fun ResourceLines(obj: WorldObject, state: RuntimeState) {
  * already use. World Dataset refactor step 9 (Runtime completion): this Runtime previously had
  * no renderer for it at all and only ever showed summary.
  */
+/**
+ * An interpreted web document (Find's find.open result, dev.elonn canonical/html.md,
+ * "Semantic regions") is partitioned into regions, not one flat content tree. `focusedRegion` is
+ * World's own state for this container (context.objects[id].region, canonical/context.md,
+ * "Recognized detail: region focus") -- this composable reads it, it does not track or decide
+ * which region is shown. Mirrors web.elonn.local's documentNode()/unity.elonn.app's
+ * RenderDocument() exactly: a document with more than one region always shows the region list
+ * first until World reports one focused; a single-region document (no landmark structure at
+ * all) renders it directly, since a list of one has nothing to choose between.
+ */
+@Composable
+private fun DocumentBody(
+    obj: WorldObject,
+    focusedRegion: String,
+    onFocusRegion: (String, String) -> Unit,
+    state: RuntimeState,
+) {
+    val regions = obj.content.optJSONArray("regions") ?: return
+    var selectedContent: JSONArray? = null
+    if (focusedRegion.isNotBlank()) {
+        for (i in 0 until regions.length()) {
+            val region = regions.optJSONObject(i) ?: continue
+            if (region.optString("key") == focusedRegion) {
+                selectedContent = region.optJSONArray("content")
+                break
+            }
+        }
+    }
+
+    when {
+        regions.length() > 1 && selectedContent != null -> BodyContentNodes(selectedContent, state)
+        regions.length() > 1 -> DocumentRegionList(regions, obj.id, onFocusRegion)
+        regions.length() == 1 -> BodyContentNodes(regions.optJSONObject(0)?.optJSONArray("content") ?: JSONArray(), state)
+    }
+}
+
+private val DocumentRegionLabels = mapOf(
+    "header" to "Header",
+    "navigation" to "Navigation",
+    "main" to "Main content",
+    "sidebar" to "Sidebar",
+    "secondary_sidebar" to "Secondary sidebar",
+    "footer" to "Footer",
+)
+
+/**
+ * Each row dispatches world.focus_region naming this container and the region key -- a real
+ * World Call, not a Runtime-local view switch (same reasoning as unity.elonn.app's
+ * RenderDocumentRegionList). Returning to this list needs no dedicated control here: focusing a
+ * region advances the container's depth, so FloatingWindow's own back control (shown once
+ * canGoBack is true) already pops it.
+ */
+@Composable
+private fun DocumentRegionList(regions: JSONArray, objectId: String, onFocusRegion: (String, String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.xs)) {
+        for (i in 0 until regions.length()) {
+            val key = regions.optJSONObject(i)?.optString("key").orEmpty()
+            if (key.isBlank()) continue
+            TextButton(onClick = { onFocusRegion(objectId, key) }) {
+                Text(DocumentRegionLabels[key] ?: key)
+            }
+        }
+    }
+}
+
 @Composable
 private fun BodyContentNodes(nodes: JSONArray, state: RuntimeState) {
     Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.sm)) {
