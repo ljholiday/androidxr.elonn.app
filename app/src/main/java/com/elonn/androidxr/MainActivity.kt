@@ -1021,7 +1021,7 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
         for (action in actions) {
             when {
                 action.isSimpleAction -> TextButton(onClick = { onDispatch(action.label, action.operationInvocation!!) }) { Text(action.label) }
-                action.needsForm -> ActionForm(action)
+                action.needsForm -> ActionForm(action, onDispatch)
                 !action.enabled -> Column(modifier = Modifier.padding(vertical = 2.dp)) {
                     Text(action.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f))
                     if (action.reason.isNotBlank()) {
@@ -1034,27 +1034,66 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
 }
 
 /**
- * BLOCKED, deliberately, pending decision.generic_form_payload_initialization_option_a_
- * 20261025 (agents.elonn.com): this used to open every multi-argument Action's form with
- * every field blank (`mutableStateOf("")`), with no initialization from
- * operation_invocation.payload at all. For a full-replacement operation (e.g.
- * identity.profile.update) that is a live data-loss path -- submitting wipes any field the
+ * `edit_object` is specifically blocked, pending
+ * decision.generic_form_payload_initialization_option_a_20261025 (agents.elonn.com): this used
+ * to open every multi-argument Action's form with every field blank, with no initialization
+ * from operation_invocation.payload at all. For an edit_object Action (identity.profile.update
+ * and the same kind elsewhere) that is a live data-loss path -- submitting wipes any field the
  * member did not retype. The canonical fix (the owning Service supplies initial values in
  * payload; this Runtime initializes from payload -> Contract default -> empty, never from
- * guessing at Object content) is real, cross-Runtime work, not a quick patch -- so submission
- * stays blocked here until that lands and is verified, rather than leaving the destructive
- * path open, or copying web.elonn.local's/unity.elonn.app's own guess-based workaround (the
- * thing the canonical fix exists to remove, not extend).
+ * guessing at Object content) is real, cross-Runtime, cross-Service work -- the full platform
+ * migration, not a quick patch -- so submission stays blocked for this Action type until that
+ * lands and is verified, rather than leaving the destructive path open, or copying
+ * web.elonn.local's/unity.elonn.app's own guess-based workaround (the thing the canonical fix
+ * exists to remove, not extend).
+ *
+ * Every OTHER Action type keeps its pre-existing (blank-seeded, string-only) form: a creation
+ * or compose-style Action has no existing value to lose, so blank fields are the correct start
+ * state already, not a stopgap -- blocking those too would disable real, unrelated, safe
+ * functionality to guard against a risk that is specific to editing existing data.
  */
 @Composable
-private fun ActionForm(action: RuntimeAction) {
+private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -> Unit) {
+    if (action.type == "edit_object") {
+        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+            Text(action.label, style = MaterialTheme.typography.labelLarge)
+            Text(
+                "Editing isn't available on this device yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+            )
+        }
+        return
+    }
+
+    val invocation = action.operationInvocation ?: return
+    val arguments = invocation.optJSONObject("arguments") ?: JSONObject()
+    val keys = action.argumentKeys
+    val fieldValues = remember(action.id) { keys.associateWith { mutableStateOf("") } }
+
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(action.label, style = MaterialTheme.typography.labelLarge)
-        Text(
-            "Editing isn't available on this device yet.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
-        )
+        for (key in keys) {
+            val spec = arguments.optJSONObject(key) ?: JSONObject()
+            var value by fieldValues.getValue(key)
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                label = { Text(spec.optString("label", key)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            )
+        }
+        TextButton(onClick = {
+            val existingPayload = invocation.optJSONObject("payload")
+            val payload = if (existingPayload != null) JSONObject(existingPayload.toString()) else JSONObject()
+            for (key in keys) payload.put(key, fieldValues.getValue(key).value)
+            val filledInvocation = JSONObject(invocation.toString()).apply {
+                remove("arguments")
+                put("payload", payload)
+            }
+            onDispatch(action.label, filledInvocation)
+        }) { Text("Submit") }
     }
 }
 
