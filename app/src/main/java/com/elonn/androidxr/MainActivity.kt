@@ -980,7 +980,7 @@ private fun BodyList(node: JSONObject, state: RuntimeState) {
  * never a raw URL on the node itself (mirrors web.elonn.local's resourceById/documentMedia). */
 @Composable
 private fun BodyMedia(node: JSONObject, state: RuntimeState) {
-    val resource = state.resourcesById[node.optString("resource")] ?: return
+    val resource = state.resourcesById[node.optString("resource_or_object_ref")] ?: return
     when {
         resource.isImage -> RemoteImage(
             url = resource.source,
