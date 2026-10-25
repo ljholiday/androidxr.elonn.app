@@ -27,18 +27,7 @@ data class WorldObject(
      * with no `space` Placement, or one with no position.
      */
     val location: Pair<Double, Double>? = null,
-) {
-    /**
-     * The Finding card's meta line -- summary only. web.elonn.local never
-     * falls back to showing an Object's raw `type` here (web-renderer.js only
-     * appends a meta/summary node `if (object.summary !== '')`, otherwise
-     * omits the line entirely); this file previously claimed that fallback
-     * matched web, which was wrong and went unnoticed until a `world.thread`
-     * Object (summary always blank) surfaced it as a literal "world.thread"
-     * line under a search's title.
-     */
-    val meta: String get() = summary
-}
+)
 
 /**
  * resource.md: a Resource is never a loose URL a Runtime reads to decide
@@ -79,6 +68,23 @@ fun firstImageMediaResource(obj: WorldObject, state: RuntimeState): WorldResourc
 
 private fun firstImageMediaNode(nodes: org.json.JSONArray?): JSONObject? =
     firstMatchingBodyNode(nodes) { node -> node.optString("node") == "media" && node.optString("kind") == "image" }
+
+/**
+ * A compact card's condensed text (grid/result row, roster row, sequence row alike): the
+ * Object's own canonical summary when present, else the first real text already in its
+ * content.body -- never a fabricated summary, and never the Object's raw type. Mirrors
+ * web.elonn.local's compactBodyText()/firstBodyText(), reusing the same firstMatchingBodyNode()
+ * traversal firstImageMediaResource() uses for thumbnails. Presentation choice for limited
+ * space, not a derived summary field (decision.summary_is_descriptive_not_a_content_excerpt_
+ * 20261024, which explicitly permits exactly this).
+ */
+fun compactBodyText(obj: WorldObject): String {
+    if (obj.summary.isNotBlank()) return obj.summary
+    val node = firstMatchingBodyNode(obj.content.optJSONArray("body")) { node ->
+        (node.optString("node") == "paragraph" || node.optString("node") == "heading") && node.optString("text").isNotBlank()
+    } ?: return ""
+    return node.optString("text")
+}
 
 /**
  * The one traversal every "find the first X in content.body" need shares -- depth-first,

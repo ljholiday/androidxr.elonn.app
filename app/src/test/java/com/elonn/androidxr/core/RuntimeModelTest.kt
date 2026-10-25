@@ -95,6 +95,31 @@ class RuntimeModelTest {
     }
 
     @Test
+    fun compactBodyTextPrefersSummaryWhenPresent() {
+        val obj = objectWithBody("""[{"node": "paragraph", "text": "Body text"}]""").copy(summary = "A real summary")
+
+        assertEquals("A real summary", compactBodyText(obj))
+    }
+
+    @Test
+    fun compactBodyTextFallsBackToFirstBodyTextWhenSummaryIsBlank() {
+        // decision.summary_is_descriptive_not_a_content_excerpt_20261024: a conversation
+        // message whose Service deliberately leaves summary blank since content.body already
+        // IS its only real content -- a compact card's presentation choice, not a derived
+        // summary field.
+        val obj = objectWithBody("""[{"node": "paragraph", "text": "Hey, are we still on for lunch?"}]""")
+
+        assertEquals("Hey, are we still on for lunch?", compactBodyText(obj))
+    }
+
+    @Test
+    fun compactBodyTextReturnsBlankWhenNeitherSummaryNorBodyTextExist() {
+        val obj = objectWithBody("""[{"node": "media", "kind": "image", "resource_or_object_ref": "resource:1"}]""")
+
+        assertEquals("", compactBodyText(obj))
+    }
+
+    @Test
     fun returnsNullWhenContentBodyIsAbsent() {
         val obj = WorldObject(id = "object:test", type = "test.object", title = "", summary = "", content = JSONObject("{}"))
 

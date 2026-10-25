@@ -56,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
 import com.elonn.androidxr.core.FindingEntry
+import com.elonn.androidxr.core.compactBodyText
 import com.elonn.androidxr.core.firstImageMediaResource
 import com.elonn.androidxr.core.PanelStore
 import com.elonn.androidxr.core.RuntimeAction
@@ -1097,6 +1098,7 @@ private fun ObjectRow(
 ) {
     val selected = obj.id == state.selectedObjectId
     val sourceText = firstExternalReferenceText(obj, state)
+    val meta = compactBodyText(obj)
     // decision.thumbnail_is_a_media_node_not_a_canonical_field_20261024: a compact card's own
     // preview image, the same first-eligible-image-media-node-in-content.body rule every
     // compact card uses -- not the Object's full Resources/Actions, which this row
@@ -1125,8 +1127,8 @@ private fun ObjectRow(
             )
         }
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
-        if (obj.meta.isNotBlank()) {
-            Text(obj.meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (meta.isNotBlank()) {
+            Text(meta, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
         if (sourceText != null) {
             Text(
