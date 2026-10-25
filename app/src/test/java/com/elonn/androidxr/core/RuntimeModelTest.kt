@@ -177,4 +177,20 @@ class RuntimeModelTest {
         assert(!embed.isExternalReference)
         assert(!image.isExternalReference)
     }
+
+    @Test
+    fun readFormContentReadsWorldOwnedArrayControlLabels() {
+        val form = readFormContent(JSONObject("""{"array_add_label": "Add item", "array_remove_label": "Remove item"}"""))
+
+        assertEquals("Add item", form.arrayAddLabel)
+        assertEquals("Remove item", form.arrayRemoveLabel)
+    }
+
+    @Test
+    fun readFormContentFallsBackGracefullyWhenAbsent() {
+        val form = readFormContent(null)
+
+        assertEquals(FormContent.Empty.arrayAddLabel, form.arrayAddLabel)
+        assertEquals(FormContent.Empty.arrayRemoveLabel, form.arrayRemoveLabel)
+    }
 }

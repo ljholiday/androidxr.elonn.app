@@ -27,17 +27,26 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +65,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.elonn.androidxr.core.AuthClient
 import com.elonn.androidxr.core.FindingEntry
+import com.elonn.androidxr.core.FormContent
 import com.elonn.androidxr.core.compactBodyText
 import com.elonn.androidxr.core.firstImageMediaResource
 import com.elonn.androidxr.core.PanelStore
@@ -1021,7 +1031,7 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
         for (action in actions) {
             when {
                 action.isSimpleAction -> TextButton(onClick = { onDispatch(action.label, action.operationInvocation!!) }) { Text(action.label) }
-                action.needsForm -> ActionForm(action, onDispatch)
+                action.needsForm -> ActionForm(action, state.formContent, onDispatch)
                 !action.enabled -> Column(modifier = Modifier.padding(vertical = 2.dp)) {
                     Text(action.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.5f))
                     if (action.reason.isNotBlank()) {
@@ -1034,66 +1044,225 @@ private fun ActionLines(obj: WorldObject, state: RuntimeState, onDispatch: (Stri
 }
 
 /**
- * `edit_object` is specifically blocked, pending
- * decision.generic_form_payload_initialization_option_a_20261025 (agents.elonn.com): this used
- * to open every multi-argument Action's form with every field blank, with no initialization
- * from operation_invocation.payload at all. For an edit_object Action (identity.profile.update
- * and the same kind elsewhere) that is a live data-loss path -- submitting wipes any field the
- * member did not retype. The canonical fix (the owning Service supplies initial values in
- * payload; this Runtime initializes from payload -> Contract default -> empty, never from
- * guessing at Object content) is real, cross-Runtime, cross-Service work -- the full platform
- * migration, not a quick patch -- so submission stays blocked for this Action type until that
- * lands and is verified, rather than leaving the destructive path open, or copying
- * web.elonn.local's/unity.elonn.app's own guess-based workaround (the thing the canonical fix
- * exists to remove, not extend).
- *
- * Every OTHER Action type keeps its pre-existing (blank-seeded, string-only) form: a creation
- * or compose-style Action has no existing value to lose, so blank fields are the correct start
- * state already, not a stopgap -- blocking those too would disable real, unrelated, safe
- * functionality to guard against a risk that is specific to editing existing data.
+ * Per-argument editable state for one open ActionForm. Only the field matching the
+ * argument's own declared `type` is ever read back on submit -- the others just sit unused,
+ * simpler than a sealed class per type for a handful of fields. Initialized once per Action
+ * (dev.elonn canonical/action.md, Initial values): payload[key] if present (null ->
+ * deliberately empty, no default fallback; any other value used exactly as given) -- else the
+ * Contract's declared default -- else empty. Never reads the target Object's own content (the
+ * guess web.elonn.local/unity.elonn.app used before this same migration
+ * (decision.generic_form_payload_initialization_option_a_20261025, agents.elonn.com) removed
+ * it there too).
  */
-@Composable
-private fun ActionForm(action: RuntimeAction, onDispatch: (String, JSONObject) -> Unit) {
-    if (action.type == "edit_object") {
-        Column(modifier = Modifier.padding(vertical = 4.dp)) {
-            Text(action.label, style = MaterialTheme.typography.labelLarge)
-            Text(
-                "Editing isn't available on this device yet.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
-            )
-        }
-        return
-    }
+private class ArgumentFieldState {
+    var text by mutableStateOf("")
+    var boolValue by mutableStateOf(false)
+    val arrayItems = mutableStateListOf<String>()
+}
 
+@Composable
+private fun ActionForm(action: RuntimeAction, formContent: FormContent, onDispatch: (String, JSONObject) -> Unit) {
     val invocation = action.operationInvocation ?: return
     val arguments = invocation.optJSONObject("arguments") ?: JSONObject()
-    val keys = action.argumentKeys
-    val fieldValues = remember(action.id) { keys.associateWith { mutableStateOf("") } }
+    val payload = invocation.optJSONObject("payload")
+    val keys = action.argumentKeys.filter { arguments.optJSONObject(it)?.optString("type") != "geo_point" }
+
+    // geo_point ("a real map with a pickable or draggable point") and drawing_operation ("a
+    // live drawing surface") both need real, substantial capabilities this Runtime does not
+    // have yet (a mapping dependency; a canvas-based stroke-capture surface matching web/
+    // Unity's own) -- skipped here rather than rendered wrong, same as web.elonn.local/
+    // unity.elonn.app in this same pass (next_step.geo_point_map_widget_dependency_choice_
+    // 20261025 on agents.elonn.com covers geo_point; drawing_operation is a separate, larger,
+    // not-yet-scoped gap).
+    val fieldStates = remember(action.id) {
+        keys.associateWith { key ->
+            val spec = arguments.optJSONObject(key) ?: JSONObject()
+            val type = spec.optString("type", "string")
+            val format = spec.optJSONObject("constraints")?.optString("format").orEmpty()
+            val hasPayloadKey = payload != null && payload.has(key)
+            val rawValue: Any? = if (hasPayloadKey) {
+                payload!!.opt(key).takeUnless { it == null || it == JSONObject.NULL }
+            } else {
+                spec.opt("default").takeUnless { it == null || it == JSONObject.NULL }
+            }
+            val fieldState = ArgumentFieldState()
+            when (type) {
+                "boolean" -> fieldState.boolValue = rawValue as? Boolean ?: false
+                "array" -> {
+                    val items = rawValue as? JSONArray
+                    if (items != null) for (i in 0 until items.length()) fieldState.arrayItems.add(items.optString(i))
+                }
+                else -> {
+                    // constraints.format: "password" is the one canonical way to declare
+                    // masked, never-prefilled input (contract-authoring-guide.md) -- never
+                    // seeded from rawValue even when technically present.
+                    fieldState.text = if (format == "password") "" else rawValue?.toString().orEmpty()
+                }
+            }
+            fieldState
+        }
+    }
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(action.label, style = MaterialTheme.typography.labelLarge)
         for (key in keys) {
             val spec = arguments.optJSONObject(key) ?: JSONObject()
-            var value by fieldValues.getValue(key)
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                label = { Text(spec.optString("label", key)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            )
+            val type = spec.optString("type", "string")
+            val format = spec.optJSONObject("constraints")?.optString("format").orEmpty()
+            val label = spec.optString("label", key)
+            val fieldState = fieldStates.getValue(key)
+            when {
+                type == "boolean" -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                ) {
+                    Text(label, modifier = Modifier.weight(1f))
+                    Switch(checked = fieldState.boolValue, onCheckedChange = { fieldState.boolValue = it })
+                }
+                type == "array" -> ArrayArgumentField(label, fieldState.arrayItems, formContent)
+                type == "datetime" -> DateTimeArgumentField(label, fieldState)
+                type == "integer" || type == "number" -> OutlinedTextField(
+                    value = fieldState.text,
+                    onValueChange = { fieldState.text = it },
+                    label = { Text(label) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                )
+                format == "password" -> OutlinedTextField(
+                    value = fieldState.text,
+                    onValueChange = { fieldState.text = it },
+                    label = { Text(label) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                )
+                format == "markdown" -> OutlinedTextField(
+                    value = fieldState.text,
+                    onValueChange = { fieldState.text = it },
+                    label = { Text(label) },
+                    singleLine = false,
+                    minLines = 6,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                )
+                else -> OutlinedTextField(
+                    value = fieldState.text,
+                    onValueChange = { fieldState.text = it },
+                    label = { Text(label) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                )
+            }
         }
         TextButton(onClick = {
             val existingPayload = invocation.optJSONObject("payload")
-            val payload = if (existingPayload != null) JSONObject(existingPayload.toString()) else JSONObject()
-            for (key in keys) payload.put(key, fieldValues.getValue(key).value)
+            val submittedPayload = if (existingPayload != null) JSONObject(existingPayload.toString()) else JSONObject()
+            for (key in keys) {
+                val spec = arguments.optJSONObject(key) ?: JSONObject()
+                val type = spec.optString("type", "string")
+                val fieldState = fieldStates.getValue(key)
+                // runtime-authoring-guide.md, Serialization: a Contract-declared type's real
+                // JSON shape, never a stringified form of it.
+                when (type) {
+                    "boolean" -> submittedPayload.put(key, fieldState.boolValue)
+                    "integer" -> submittedPayload.put(key, fieldState.text.toLongOrNull() ?: JSONObject.NULL)
+                    "number" -> submittedPayload.put(key, fieldState.text.toDoubleOrNull() ?: JSONObject.NULL)
+                    "array" -> submittedPayload.put(key, JSONArray(fieldState.arrayItems.toList()))
+                    else -> submittedPayload.put(key, fieldState.text)
+                }
+            }
             val filledInvocation = JSONObject(invocation.toString()).apply {
                 remove("arguments")
-                put("payload", payload)
+                put("payload", submittedPayload)
             }
             onDispatch(action.label, filledInvocation)
         }) { Text("Submit") }
+    }
+}
+
+/**
+ * A canonical `array` argument (contract-authoring-guide.md, Operation Argument Schemas;
+ * runtime-authoring-guide.md, Argument types: "a list value"): one text row per item,
+ * Add/Remove buttons, World-owned labels (FormContent) -- never a single opaque text box.
+ */
+@Composable
+private fun ArrayArgumentField(label: String, items: MutableList<String>, formContent: FormContent) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        items.forEachIndexed { index, value ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { items[index] = it },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { items.removeAt(index) }) { Text(formContent.arrayRemoveLabel) }
+            }
+        }
+        TextButton(onClick = { items.add("") }) { Text(formContent.arrayAddLabel) }
+    }
+}
+
+/**
+ * A canonical `datetime` argument (runtime-authoring-guide.md, Argument types: "a date and
+ * time picker... Do not render it as free text"). Produces the naive wall-clock string the
+ * Contract declares (e.g. "2026-09-16T21:09:20"), never a timezone-bearing one -- Material3's
+ * DatePicker/TimePicker both already work in wall-clock terms (DatePicker's epoch millis are
+ * UTC-midnight for the selected calendar day; TimePicker's hour/minute carry no zone), so
+ * neither needs any device-timezone conversion to produce one.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateTimeArgumentField(label: String, fieldState: ArgumentFieldState) {
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var pendingDateMillis by remember { mutableStateOf<Long?>(null) }
+
+    OutlinedTextField(
+        value = fieldState.text,
+        onValueChange = {},
+        readOnly = true,
+        label = { Text(label) },
+        trailingIcon = { TextButton(onClick = { showDatePicker = true }) { Text("Pick") } },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    )
+
+    if (showDatePicker) {
+        val dateState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDateMillis = dateState.selectedDateMillis
+                    showDatePicker = false
+                    showTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } },
+        ) { DatePicker(state = dateState) }
+    }
+
+    if (showTimePicker) {
+        val timeState = rememberTimePickerState()
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val millis = pendingDateMillis
+                    if (millis != null) {
+                        val date = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                        fieldState.text = "%04d-%02d-%02dT%02d:%02d:00".format(
+                            date.year, date.monthValue, date.dayOfMonth, timeState.hour, timeState.minute,
+                        )
+                    }
+                    showTimePicker = false
+                }) { Text("Done") }
+            },
+            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("Cancel") } },
+            text = { TimePicker(state = timeState) },
+        )
     }
 }
 

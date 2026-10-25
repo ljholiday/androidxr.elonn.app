@@ -52,6 +52,32 @@ data class ObjectContent(
     }
 }
 
+/**
+ * World-owned labels for generic argument-form controls (context.content.form;
+ * world-content.json's "form" section) -- e.g. the Add/Remove row buttons a canonical
+ * `array` argument renders. Mirrors unity.elonn.app's RuntimeModels.cs FormContent.
+ */
+data class FormContent(
+    val arrayAddLabel: String,
+    val arrayRemoveLabel: String,
+) {
+    companion object {
+        val Empty = FormContent(
+            arrayAddLabel = "Add",
+            arrayRemoveLabel = "Remove",
+        )
+    }
+}
+
+/** context.content.form (parallel to DesignTokens.kt's readTheme()). Absent/malformed falls back to FormContent.Empty's defaults field by field, not a crash. */
+internal fun readFormContent(form: JSONObject?): FormContent {
+    if (form == null) return FormContent.Empty
+    return FormContent(
+        arrayAddLabel = form.optString("array_add_label").ifBlank { FormContent.Empty.arrayAddLabel },
+        arrayRemoveLabel = form.optString("array_remove_label").ifBlank { FormContent.Empty.arrayRemoveLabel },
+    )
+}
+
 /** context.content.find (parallel to DesignTokens.kt's readTheme()). Absent/malformed falls back to FindContent.Empty's defaults field by field, not a crash. */
 internal fun readFindContent(find: JSONObject?): FindContent {
     if (find == null) return FindContent.Empty

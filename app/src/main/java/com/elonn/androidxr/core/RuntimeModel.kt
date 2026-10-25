@@ -196,6 +196,7 @@ data class RuntimeState(
     val theme: ResolvedTheme,
     val findContent: FindContent,
     val objectContent: ObjectContent,
+    val formContent: FormContent,
 ) {
     /** context.objects[id].title, falling back to the Object's own title (web.elonn parity). */
     fun carryTitle(obj: WorldObject): String =
@@ -218,6 +219,7 @@ data class RuntimeState(
             theme = ResolvedTheme.Empty,
             findContent = FindContent.Empty,
             objectContent = ObjectContent.Empty,
+            formContent = FormContent.Empty,
         )
     }
 }
@@ -259,6 +261,7 @@ object RuntimeInterpreter {
         val content = context?.optJSONObject("content")
         val findContent = readFindContent(content?.optJSONObject("find"))
         val objectContent = readObjectContent(content?.optJSONObject("object"))
+        val formContent = readFormContent(content?.optJSONObject("form"))
         // context.thread_id (dev.elonn canonical/thread.md, world.elonn's WorldService::withThreadId):
         // always present on a response -- the id to continue, or "" when world.clear ended the
         // Thread. Never fabricated client-side; just echoed back verbatim on the next Call.
@@ -280,6 +283,7 @@ object RuntimeInterpreter {
             theme = theme,
             findContent = findContent,
             objectContent = objectContent,
+            formContent = formContent,
         )
     }
 
