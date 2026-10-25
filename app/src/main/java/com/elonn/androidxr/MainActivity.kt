@@ -907,7 +907,8 @@ private fun BodyMedia(node: JSONObject, state: RuntimeState) {
     when {
         resource.isImage -> RemoteImage(
             url = resource.source,
-            modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
+            maxHeight = 180.dp,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
         resource.isEmbeddable -> AndroidView(
             modifier = Modifier.fillMaxWidth().height(180.dp).padding(top = 4.dp),
@@ -1103,7 +1104,7 @@ private fun ObjectRow(
         if (previewResource != null) {
             RemoteImage(
                 url = previewResource.source,
-                modifier = Modifier.fillMaxWidth().height(120.dp),
+                maxHeight = 120.dp,
             )
         }
         Text(obj.title.ifBlank { obj.id }, style = MaterialTheme.typography.titleMedium)
