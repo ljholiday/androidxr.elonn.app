@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.elonn.androidxr.core.ObjectContent
 import com.elonn.androidxr.core.PanelGeometry
 import com.elonn.androidxr.core.PanelStore
 import kotlin.math.roundToInt
@@ -75,6 +76,10 @@ fun FloatingWindow(
     // presentation). Only Object windows (closable) offer it; the Entry window never does.
     canGoBack: Boolean = false,
     onBack: (() -> Unit)? = null,
+    // World-owned title-bar labels (context.content.object) -- never literals here. Only
+    // consulted when closable (Back/Collapse/Close render), so the non-closable Entry window
+    // can safely omit this and keep ObjectContent.Empty's defaults.
+    objectContent: ObjectContent = ObjectContent.Empty,
     // A distinct value here (e.g. a counter bumped once per completed search) forces this window
     // open even if the member had it collapsed -- so a fresh result set (or its error) is never
     // left hidden. null means "no forced expand," the default for every window that doesn't need
@@ -186,15 +191,17 @@ fun FloatingWindow(
             // Title bar order per layout.md: back, collapse, close. Back and collapse are Object
             // controls, so the Entry window (non-closable) keeps only its own show/hide.
             if (closable && canGoBack && onBack != null) {
-                TextButton(onClick = onBack) { Text("Back") }
+                TextButton(onClick = onBack) { Text(objectContent.backLabel) }
             }
             header(collapsed, ::toggleCollapsed)
             if (closable) {
-                TextButton(onClick = ::toggleCollapsed) { Text(if (collapsed) "Expand" else "Collapse") }
+                TextButton(onClick = ::toggleCollapsed) {
+                    Text(if (collapsed) objectContent.expandLabel else objectContent.collapseLabel)
+                }
                 TextButton(onClick = {
                     store.forget(panelId)
                     onClosed?.invoke()
-                }) { Text("Close") }
+                }) { Text(objectContent.closeLabel) }
             }
         }
 

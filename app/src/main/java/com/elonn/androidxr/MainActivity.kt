@@ -602,6 +602,7 @@ internal fun CarryLayer(inputs: CarryInputs) {
                         onClosed = { inputs.onClose(obj.id) },
                         canGoBack = state.navigationById[obj.id]?.hasHistory == true,
                         onBack = { inputs.onBack(obj.id) },
+                        objectContent = state.objectContent,
                         header = { _, _ ->
                             Text(
                                 state.carryTitle(obj),
@@ -708,7 +709,7 @@ private fun EntryResultsWindow(
         // status message worth surfacing), never on some other unrelated recomposition.
         expandOnChangeOf = if (resultsPaneChangedCount > 0) resultsPaneChangedCount else null,
         header = { collapsed, toggleCollapsed ->
-            Text("Find", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(state.findContent.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (findings.isNotEmpty()) {
                 // web.elonn.local's clearResults() resets the typed query alongside emptying the
                 // Results pane (queryInput.value = '') -- this button, unlike Go
@@ -717,7 +718,7 @@ private fun EntryResultsWindow(
                 TextButton(onClick = {
                     query = ""
                     onClearResults()
-                }) { Text("Clear") }
+                }) { Text(state.findContent.clearLabel) }
             }
             TextButton(onClick = toggleCollapsed) { Text(if (collapsed) "Show" else "Hide") }
         },
@@ -768,14 +769,14 @@ private fun EntryResultsWindow(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("Find...") },
+                    placeholder = { Text(state.findContent.placeholder) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
                 if (isBusy) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp).padding(start = ElonnSpacing.xs), strokeWidth = 2.dp)
                 } else {
-                    TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text("Go") }
+                    TextButton(onClick = { if (query.isNotBlank()) onSubmitFind(query) }) { Text(state.findContent.searchLabel) }
                 }
             }
         },
