@@ -9,18 +9,16 @@ import org.json.JSONObject
  * unity.elonn.app's RuntimeModels.cs FindContent). Defaults mirror world-content.json's own
  * defaults, used only when an older/degraded response omits context.content.find.
  *
- * scopeEnum/scopeDefault are parsed but deliberately not surfaced as a selector yet
+ * No scope (nearby/everywhere) field here: the scope selector was removed from web and Unity too
  * (next_step.find_scope_selector_is_decorative_in_web_and_unity_20261024 on agents.elonn.com --
- * web and Unity both already have scope-selector UI, but neither actually sends the chosen scope
- * to World; porting that UI here would just be a third copy of the same decorative control).
+ * neither ever actually sent the member's chosen scope to World). Check back for related
+ * service-side scope handling (Find/World) before reintroducing a client-side selector.
  */
 data class FindContent(
     val title: String,
     val placeholder: String,
     val searchLabel: String,
     val clearLabel: String,
-    val scopeEnum: List<String>,
-    val scopeDefault: String,
 ) {
     companion object {
         val Empty = FindContent(
@@ -28,8 +26,6 @@ data class FindContent(
             placeholder = "Find coffee, food, parks...",
             searchLabel = "Search",
             clearLabel = "Clear",
-            scopeEnum = listOf("nearby", "everywhere"),
-            scopeDefault = "everywhere",
         )
     }
 }
@@ -59,20 +55,11 @@ data class ObjectContent(
 /** context.content.find (parallel to DesignTokens.kt's readTheme()). Absent/malformed falls back to FindContent.Empty's defaults field by field, not a crash. */
 internal fun readFindContent(find: JSONObject?): FindContent {
     if (find == null) return FindContent.Empty
-    val scope = find.optJSONObject("scope")
-    val scopeEnumJson = scope?.optJSONArray("enum")
-    val scopeEnum = if (scopeEnumJson != null && scopeEnumJson.length() > 0) {
-        (0 until scopeEnumJson.length()).mapNotNull { scopeEnumJson.optString(it).takeIf { s -> s.isNotBlank() } }
-    } else {
-        FindContent.Empty.scopeEnum
-    }
     return FindContent(
         title = find.optString("title").ifBlank { FindContent.Empty.title },
         placeholder = find.optString("placeholder").ifBlank { FindContent.Empty.placeholder },
         searchLabel = find.optString("search_label").ifBlank { FindContent.Empty.searchLabel },
         clearLabel = find.optString("clear_label").ifBlank { FindContent.Empty.clearLabel },
-        scopeEnum = scopeEnum,
-        scopeDefault = scope?.optString("default")?.ifBlank { FindContent.Empty.scopeDefault } ?: FindContent.Empty.scopeDefault,
     )
 }
 
