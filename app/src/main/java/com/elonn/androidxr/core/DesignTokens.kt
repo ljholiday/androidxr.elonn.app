@@ -47,7 +47,7 @@ internal fun readTheme(theme: JSONObject?): ResolvedTheme {
     return ResolvedTheme(
         theme = theme.optString("theme"),
         version = theme.optInt("version"),
-        scale = theme.optString("scale", "md"),
+        scale = theme.optString("scale").ifBlank { "md" },
         tokens = tokens,
     )
 }

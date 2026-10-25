@@ -109,6 +109,29 @@ class RuntimeModelTest {
     }
 
     @Test
+    fun actionLabelFallsBackToActionWhenWorldSendsAnExplicitEmptyString() {
+        // optString(key, fallback) only falls back for an absent/null key -- an explicit ""
+        // (present but empty) slipped through un-defaulted until this was changed to
+        // .ifBlank{}, matching web.elonn.local's common.text() and the identical fix made to
+        // unity.elonn.app's Text() after this exact gap let an Action's own .type leak onto a
+        // button there.
+        val dataset = JSONObject(
+            """{
+                "id": "dataset:world:1", "type": "world",
+                "objects": [], "collections": [], "relationships": [], "resources": [], "placements": [], "errors": [],
+                "actions": [
+                    {"id": "action:1", "type": "operation_invocation", "target": "",
+                     "content": {"label": ""}}
+                ]
+            }"""
+        )
+
+        val state = RuntimeInterpreter.apply(dataset)
+
+        assertEquals("Action", state.actionsById["action:1"]?.label)
+    }
+
+    @Test
     fun resourceIsImageOnlyWhenKindIsImageAndSourceIsPresent() {
         val image = WorldResource(id = "r1", kind = "image", source = "https://img.example.com/a.jpg", label = "")
         val embed = WorldResource(id = "r2", kind = "embed", source = "https://embed.example.com/1", label = "")

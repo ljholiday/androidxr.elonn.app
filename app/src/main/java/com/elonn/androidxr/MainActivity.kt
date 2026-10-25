@@ -391,7 +391,7 @@ private fun LoginView(action: JSONObject, error: String?, onSubmit: (JSONObject)
     val arguments = invocation.getJSONObject("arguments")
     val keys = arguments.keys().asSequence().toList()
     val fieldValues = remember(action) { keys.associateWith { mutableStateOf("") } }
-    val label = action.getJSONObject("content").optString("label", "Log in")
+    val label = action.getJSONObject("content").optString("label").ifBlank { "Log in" }
 
     Column(
         modifier = Modifier

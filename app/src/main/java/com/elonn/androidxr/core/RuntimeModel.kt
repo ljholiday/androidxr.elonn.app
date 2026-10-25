@@ -331,7 +331,13 @@ object RuntimeInterpreter {
                 id = id,
                 type = payload.optString("type"),
                 targetId = payload.optString("target"),
-                label = content.optString("label", "Action"),
+                // optString(key, fallback) only falls back for an absent/null key -- World
+                // sending content.label present but "" would slip through un-defaulted
+                // (org.json's optString(name, fallback) only checks JSONObject.NULL/absent, not
+                // an explicit empty string). .ifBlank{} catches both, matching web.elonn.local's
+                // common.text() and unity.elonn.app's Text() (fixed the same way after this
+                // exact gap let an Action's own .Type leak onto a button there).
+                label = content.optString("label").ifBlank { "Action" },
                 operationInvocation = content.optJSONObject("operation_invocation"),
                 enabled = availability == null || availability.optString("state") == "enabled",
                 reason = availability?.optString("reason").orEmpty(),
@@ -352,7 +358,7 @@ object RuntimeInterpreter {
             val source = content.optString("href").ifBlank { content.optString("url") }.ifBlank { content.optString("source") }
             result[id] = WorldResource(
                 id = id,
-                kind = content.optString("kind", payload.optString("type", "resource")),
+                kind = content.optString("kind").ifBlank { payload.optString("type") }.ifBlank { "resource" },
                 source = source,
                 label = content.optString("label").ifBlank { content.optString("name") }.ifBlank { id },
             )
@@ -413,7 +419,7 @@ object RuntimeInterpreter {
 
     private fun readStatus(status: JSONObject?): DatasetStatus {
         if (status == null) return DatasetStatus("ok", "")
-        val severity = status.optString("severity", "ok").let {
+        val severity = status.optString("severity").ifBlank { "ok" }.let {
             if (it == "ok" || it == "notice" || it == "error") it else "error"
         }
         return DatasetStatus(severity, status.optString("message"))
