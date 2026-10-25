@@ -318,8 +318,7 @@ private fun ElonnApp() {
                     // way in web.elonn.local's submitQuery(): opening a Discovery thread set a
                     // "current" thread id that every later, unrelated Entry search then silently
                     // kept continuing, with no way to tell). Omitting thread_id always starts a
-                    // fresh, independent Thread -- continuing a specific Thread has its own path
-                    // (onContinueThread below).
+                    // fresh, independent Thread.
                     performCall(
                         currentToken,
                         current.state.datasetId,
@@ -327,17 +326,6 @@ private fun ElonnApp() {
                         WorldCallRequest(operation = "world.compose", inputText = query),
                     )
                     resultsPaneChangedCount++
-                }
-            },
-            onContinueThread = { threadId, query ->
-                val currentToken = token ?: return@SpaceView
-                scope.launch {
-                    performCall(
-                        currentToken,
-                        current.state.datasetId,
-                        threadId,
-                        WorldCallRequest(operation = "world.compose", inputText = query),
-                    )
                 }
             },
             onClearResults = {
@@ -489,7 +477,6 @@ private fun SpaceView(
     onClose: (String) -> Unit,
     onBack: (String) -> Unit,
     onSubmitFind: (String) -> Unit,
-    onContinueThread: (String, String) -> Unit,
     onClearResults: () -> Unit,
     onFocusRegion: (String, String) -> Unit,
 ) {
@@ -516,7 +503,6 @@ private fun SpaceView(
         onClose = onClose,
         onBack = onBack,
         onSubmitFind = onSubmitFind,
-        onContinueThread = onContinueThread,
         onClearResults = onClearResults,
         onFocusRegion = onFocusRegion,
     )
@@ -557,7 +543,6 @@ internal data class CarryInputs(
     val onClose: (String) -> Unit,
     val onBack: (String) -> Unit,
     val onSubmitFind: (String) -> Unit,
-    val onContinueThread: (String, String) -> Unit,
     val onClearResults: () -> Unit,
     val onFocusRegion: (String, String) -> Unit,
 )
@@ -636,10 +621,7 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                     .fillMaxHeight()
                                     .verticalScroll(rememberScrollState()),
                             ) {
-                                if (obj.type == "world.thread") {
-                                    ThreadTurns(obj)
-                                    ThreadContinueForm(obj.discoveryThreadId, inputs.onContinueThread)
-                                } else if (obj.type == "document") {
+                                if (obj.type == "document") {
                                     // An interpreted web document (Find's find.open result,
                                     // dev.elonn canonical/html.md) is partitioned into semantic
                                     // regions (content.regions), never content.body -- mirrors
@@ -1020,66 +1002,6 @@ private fun BodyMedia(node: JSONObject, state: RuntimeState) {
             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
             modifier = Modifier.padding(top = 4.dp),
         )
-    }
-}
-
-/**
- * A Discovery thread's own Turns (dev.elonn canonical/thread.md): the
- * member's own input for each Turn, oldest first, with any clarifying
- * question Conductor asked for that Turn shown inline. Plain presentational
- * content -- a past Turn is never itself opened or selected, unlike an
- * ordinary Collection's member rows.
- */
-@Composable
-private fun ThreadTurns(obj: WorldObject) {
-    Column(verticalArrangement = Arrangement.spacedBy(ElonnSpacing.sm)) {
-        for (turn in obj.turns) {
-            Column {
-                Text(turn.input, style = MaterialTheme.typography.bodyMedium)
-                if (turn.clarifyingQuestion.isNotBlank()) {
-                    Text(
-                        turn.clarifyingQuestion,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The field at the bottom of an opened Discovery thread, to continue it --
- * mirrors Entry's own field/Go, but dispatches onContinueThread naming this
- * specific Thread's own id (threadId, read from the Object's own
- * discoveryThreadId), never whatever Thread the main Entry currently has
- * active (web.elonn.local's threadContinueFormNode()/continueDiscoveryThread()
- * use the same, deliberately separate, path). Clears after sending, unlike
- * Entry's own Go (constraint.androidxr_go_never_clears_query_20260927, which
- * is specific to Entry's field) -- matches web's own continueDiscoveryThread()
- * clearing its input after submit.
- */
-@Composable
-private fun ThreadContinueForm(threadId: String, onContinueThread: (String, String) -> Unit) {
-    var reply by remember { mutableStateOf("") }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = ElonnSpacing.xs),
-    ) {
-        OutlinedTextField(
-            value = reply,
-            onValueChange = { reply = it },
-            placeholder = { Text("Continue...") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = {
-            if (reply.isNotBlank() && threadId.isNotBlank()) {
-                onContinueThread(threadId, reply)
-                reply = ""
-            }
-        }) { Text("Send") }
     }
 }
 

@@ -8,8 +8,6 @@ import org.json.JSONObject
  * against web.elonn.local's actual runtime-kit (dataset-parser.js,
  * state-indexer.js, web-renderer.js) -- not inferred from xreal.elonn.app's
  * Unity code alone, which this session found to have real gaps of its own.
- * Find (search) and full document/region interpretation (html.md's
- * `document` Object with a region tree) are not modeled yet.
  */
 data class WorldObject(
     val id: String,
@@ -40,51 +38,7 @@ data class WorldObject(
      * line under a search's title.
      */
     val meta: String get() = summary
-
-    /**
-     * content.turns (dev.elonn canonical/thread.md; world.elonn's
-     * Composer::withDiscoveryThread()): this Object's own ordered Turns,
-     * oldest first, when it is a `world.thread` Discovery thread. Empty for
-     * every other Object type -- World only attaches `turns` to that one
-     * Recognized type.
-     */
-    val turns: List<WorldTurn>
-        get() {
-            val array = content.optJSONArray("turns") ?: return emptyList()
-            return (0 until array.length()).mapNotNull { index ->
-                val turn = array.opt(index) as? JSONObject ?: return@mapNotNull null
-                WorldTurn(
-                    ordinal = turn.optInt("ordinal", index + 1),
-                    input = turn.optString("input"),
-                    clarifyingQuestion = turn.optString("clarifying_question"),
-                )
-            }
-        }
-
-    /**
-     * This Object's own Thread id, read from its id ("world.thread:" + the
-     * Thread's id -- world.elonn's Composer::withDiscoveryThread()), for a
-     * world.thread Object only. Continuing this specific Thread must name
-     * this id, never RuntimeState.threadId -- that tracks whichever Thread
-     * the main Entry last searched, a different, unrelated Thread from
-     * whichever one of these Objects happens to be open (web.elonn.local's
-     * continueDiscoveryThread() carries the same comment, after a real bug
-     * where the main Entry silently kept continuing an old Thread). Blank
-     * for every other Object type.
-     */
-    val discoveryThreadId: String
-        get() {
-            val prefix = "world.thread:"
-            return if (type == "world.thread" && id.startsWith(prefix)) id.removePrefix(prefix) else ""
-        }
 }
-
-/** One Turn of a `world.thread` Discovery thread (thread.md): the member's own input for that Turn, and the clarifying question Conductor asked for it, if any. */
-data class WorldTurn(
-    val ordinal: Int,
-    val input: String,
-    val clarifyingQuestion: String,
-)
 
 /**
  * resource.md: a Resource is never a loose URL a Runtime reads to decide
