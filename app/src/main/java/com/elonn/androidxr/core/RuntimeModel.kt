@@ -168,6 +168,14 @@ data class FindingEntry(val kind: String, val id: String)
  * the Object's own canonical title (web.elonn.local's openedObjects()).
  * `history` isn't carried across in full here (only its presence matters,
  * for the back control); depth/subject/region are read but not yet acted on.
+ * `members` lists the ids of the content World currently shows inside this
+ * container (web.elonn.local's state-indexer.js openedObjects()/unity.elonn.app's
+ * RuntimeInterpreter.ReadNavigation()) -- a mix of Object and Collection ids, split
+ * by which index they resolve in when rendering (MainActivity.kt's MemberContent()).
+ * Without this, a container World populates purely through members (e.g. a Service
+ * dashboard's direct operation result, world.elonn's Composer.withSynthesizedContainer())
+ * renders with nothing inside, even though its own content/summary/body are empty by
+ * design and its real content lives entirely in these members.
  */
 data class NavigationEntry(
     val title: String,
@@ -175,6 +183,7 @@ data class NavigationEntry(
     val hasHistory: Boolean,
     val subject: String,
     val region: String,
+    val members: List<String> = emptyList(),
 )
 
 /** dataset.md: World's own single resolved severity+message for this Dataset. */
@@ -406,7 +415,7 @@ object RuntimeInterpreter {
         return position.optDouble("latitude") to position.optDouble("longitude")
     }
 
-    // context.objects (dataset.md, context.md): title/depth/history/subject/region
+    // context.objects (dataset.md, context.md): title/depth/history/subject/region/members
     // World owns per Object opened on Carry.
     private fun readNavigation(contextObjects: JSONObject?): Map<String, NavigationEntry> {
         val result = LinkedHashMap<String, NavigationEntry>()
@@ -422,6 +431,7 @@ object RuntimeInterpreter {
                 hasHistory = history != null && history.length() > 0,
                 subject = entry.optString("subject"),
                 region = entry.optString("region"),
+                members = strings(entry.optJSONArray("members")),
             )
         }
         return result

@@ -261,17 +261,29 @@ private fun ElonnApp() {
             onSelect = { objectId ->
                 val currentToken = token ?: return@SpaceView
                 scope.launch {
-                    performCall(
-                        currentToken,
-                        current.state.datasetId,
-                        current.state.threadId,
+                    // An Object with its own open Action (one whose real content needs a
+                    // Service call the first time -- a message thread, a document, ...) must
+                    // dispatch that Action, not world.focus: world.focus only re-presents data
+                    // already in the current snapshot (world.elonn's Composer::focus() makes no
+                    // Service call and hardcodes members = []), so focusing such an Object opens
+                    // it with none of its real content, until its own open Action is dispatched
+                    // separately. Mirrors web.elonn.local's openActionForObject()/openObject().
+                    val open = openActionForObject(objectId, current.state)
+                    val request = if (open != null) {
+                        WorldCallRequest(
+                            operation = "world.compose",
+                            inputText = open.label,
+                            operationInvocation = open.operationInvocation,
+                        )
+                    } else {
                         WorldCallRequest(
                             operation = "world.focus",
                             inputText = "world.focus",
                             originObject = objectId,
                             selectedObjectId = objectId,
-                        ),
-                    )
+                        )
+                    }
+                    performCall(currentToken, current.state.datasetId, current.state.threadId, request)
                 }
             },
             onDispatch = { label, operationInvocation ->
@@ -666,6 +678,7 @@ internal fun CarryLayer(inputs: CarryInputs) {
                                         BodyContentNodes(bodyNodes, state)
                                     }
                                     ResourceLines(obj, state)
+                                    MemberContent(obj, state, inputs.onSelect)
                                     ActionLines(obj, state, inputs.onDispatch)
                                 }
                             }
@@ -1021,6 +1034,49 @@ private fun domainOf(url: String): String = try {
     java.net.URI(url).host ?: url
 } catch (e: Exception) {
     url
+}
+
+/**
+ * The tapped Object's own local open Action (action.md: type open/open_object, a real
+ * operation_invocation), if it has one. Mirrors web.elonn.local's web-runtime.js
+ * openActionForObject() exactly -- an Object whose real content needs a Service call the first
+ * time (a message thread, a document, ...) must have that Action dispatched, not world.focus,
+ * which only re-presents the current snapshot with no Service call at all.
+ */
+private fun openActionForObject(objectId: String, state: RuntimeState): RuntimeAction? =
+    state.objectsById[objectId]?.actionIds
+        ?.mapNotNull { state.actionsById[it] }
+        ?.firstOrNull { (it.type == "open" || it.type == "open_object") && it.operationInvocation != null }
+
+/**
+ * context.objects[id].members (dataset.md, context.md): the ids of the content World currently
+ * shows inside an opened container, a mix of Collection and Object ids -- the mechanism behind
+ * e.g. a Service dashboard's direct operation result (world.elonn's Composer.
+ * withSynthesizedContainer()), which has no content/body of its own and renders purely through
+ * members. Mirrors web.elonn.local's state-indexer.js openedObjects()/unity.elonn.app's
+ * RuntimeInterpreter.ResolveCarryObjects(): split members by which index they resolve in, render
+ * each member Collection's own items first, then only the loose member Objects not already shown
+ * that way (a conversation lists its messages both as a Collection and as loose member Objects;
+ * rendering both in full would show every message twice).
+ */
+@Composable
+private fun MemberContent(obj: WorldObject, state: RuntimeState, onSelect: (String) -> Unit) {
+    val members = state.navigationById[obj.id]?.members ?: return
+    if (members.isEmpty()) return
+    val shown = HashSet<String>()
+    val memberCollections = members.mapNotNull { state.collectionsById[it] }
+    val memberObjects = members.filter { it != obj.id }.mapNotNull { state.objectsById[it] }
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        for (collection in memberCollections) {
+            for (itemId in collection.itemIds) {
+                val item = state.objectsById[itemId] ?: continue
+                if (shown.add(itemId)) ObjectRow(item, state, onSelect)
+            }
+        }
+        for (member in memberObjects) {
+            if (shown.add(member.id)) ObjectRow(member, state, onSelect)
+        }
+    }
 }
 
 /** action.md: a simple action is a button; one with arguments gets a real form; a blocked one shows World's reason, not nothing. */
