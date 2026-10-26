@@ -1233,7 +1233,7 @@ private fun ActionForm(action: RuntimeAction, formContent: FormContent, onDispat
                 put("payload", submittedPayload)
             }
             onDispatch(action.label, filledInvocation)
-        }) { Text("Submit") }
+        }) { Text(action.formSubmitLabel) }
     }
 }
 

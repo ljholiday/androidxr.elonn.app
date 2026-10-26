@@ -157,6 +157,48 @@ class RuntimeModelTest {
     }
 
     @Test
+    fun formSubmitLabelFallsBackToTheActionsOwnLabelWhenNoSubmitLabelIsDeclared() {
+        // Every form-type action in a panel (Messages' Inbox, Search, Filtered threads, ...)
+        // shares one ActionForm() composable -- it used to hardcode "Submit" regardless of the
+        // real action, matching none of them. Mirrors web.elonn.local's operationForm():
+        // submit.textContent = common.text(action.submitLabel, action.label).
+        val dataset = JSONObject(
+            """{
+                "id": "dataset:world:1", "type": "world",
+                "objects": [], "collections": [], "relationships": [], "resources": [], "placements": [], "errors": [],
+                "actions": [
+                    {"id": "action:1", "type": "invoke_operation", "target": "",
+                     "content": {"label": "Inbox"}}
+                ]
+            }"""
+        )
+
+        val state = RuntimeInterpreter.apply(dataset)
+
+        assertEquals("", state.actionsById["action:1"]?.submitLabel)
+        assertEquals("Inbox", state.actionsById["action:1"]?.formSubmitLabel)
+    }
+
+    @Test
+    fun formSubmitLabelUsesTheDeclaredSubmitLabelWhenPresent() {
+        val dataset = JSONObject(
+            """{
+                "id": "dataset:world:1", "type": "world",
+                "objects": [], "collections": [], "relationships": [], "resources": [], "placements": [], "errors": [],
+                "actions": [
+                    {"id": "action:1", "type": "invoke_operation", "target": "",
+                     "content": {"label": "Edit profile", "submit_label": "Save"}}
+                ]
+            }"""
+        )
+
+        val state = RuntimeInterpreter.apply(dataset)
+
+        assertEquals("Save", state.actionsById["action:1"]?.submitLabel)
+        assertEquals("Save", state.actionsById["action:1"]?.formSubmitLabel)
+    }
+
+    @Test
     fun resourceIsImageOnlyWhenKindIsImageAndSourceIsPresent() {
         val image = WorldResource(id = "r1", kind = "image", source = "https://img.example.com/a.jpg", label = "")
         val embed = WorldResource(id = "r2", kind = "embed", source = "https://embed.example.com/1", label = "")

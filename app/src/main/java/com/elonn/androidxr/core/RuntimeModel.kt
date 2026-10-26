@@ -120,12 +120,16 @@ data class RuntimeAction(
     val type: String,
     val targetId: String,
     val label: String,
+    val submitLabel: String,
     val operationInvocation: JSONObject?,
     val enabled: Boolean,
     val reason: String,
 ) {
     /** action.md: an entry with no operation_invocation is not a canonical Action. */
     val isDispatchable: Boolean get() = enabled && operationInvocation != null
+
+    /** A form's own submit button text, if the action declared one; the action's own label otherwise (mirrors web.elonn.local's operationForm()). */
+    val formSubmitLabel: String get() = submitLabel.ifBlank { label }
 
     val argumentKeys: List<String>
         get() = operationInvocation?.optJSONObject("arguments")?.keys()?.asSequence()?.toList().orEmpty()
@@ -357,6 +361,13 @@ object RuntimeInterpreter {
                 // common.text() and unity.elonn.app's Text() (fixed the same way after this
                 // exact gap let an Action's own .Type leak onto a button there).
                 label = content.optString("label").ifBlank { "Action" },
+                // content.submit_label (nested, canonical {id,type,content} shape) or a flat
+                // submit_label on the action itself -- mirrors web.elonn.local's dataset-parser.js
+                // (content.submit_label || action.submit_label). Distinct from label: a form's
+                // heading can read one thing ("Edit profile") while its submit button reads
+                // another ("Save") -- Messages' own dashboard entrypoints don't declare one, so
+                // this is blank for them and formSubmitLabel falls back to label ("Inbox").
+                submitLabel = content.optString("submit_label").ifBlank { payload.optString("submit_label") },
                 operationInvocation = content.optJSONObject("operation_invocation"),
                 enabled = availability == null || availability.optString("state") == "enabled",
                 reason = availability?.optString("reason").orEmpty(),
